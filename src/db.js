@@ -67,4 +67,25 @@ db.version(6).stores({
   financialTransactions: "++id, accountId, transactionType, category, referenceId, transactionDate, createdAt"
 });
 
+
+// DATABASE VERSION 7 - TWO SHOP STOCK TRANSFERS
+db.version(7).stores({
+  products: "++id, name, category, sku, createdAt",
+  customers: "++id, name, phone",
+  sales: "++id, receiptNumber, customerId, createdAt, saleType, fulfillmentStatus, paymentStatus",
+  expenses: "++id, category, amount, createdAt",
+  payments: "++id, customerId, saleId, receiptNumber, createdAt, paymentMethod",
+  bankTransactions: "++id, transactionType, accountName, amount, transactionDate, createdAt",
+  stockPurchases: "++id, productId, supplierName, purchaseDate, createdAt",
+  stockBatches: "++id, productId, purchaseId, purchaseDate, createdAt, location",
+  financialAccounts: "++id, name, type, provider, createdAt",
+  financialTransactions: "++id, accountId, transactionType, category, referenceId, transactionDate, createdAt",
+  stockTransfers: "++id, productId, fromLocation, toLocation, transferDate, createdAt"
+}).upgrade(async tx => {
+  await tx.table("stockBatches").toCollection().modify(batch => {
+    if (!batch.location) batch.location = "Main Shop";
+  });
+});
+
 export default db;
+

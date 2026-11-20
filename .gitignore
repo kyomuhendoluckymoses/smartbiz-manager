@@ -53,3 +53,4 @@ src/db-before-*.backup
 public/.icon-192.png
 
 src/db-before-*
+.vercel

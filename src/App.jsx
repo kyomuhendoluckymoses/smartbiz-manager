@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import {
   LayoutDashboard, ShoppingCart, Package, Wallet, Landmark,
   Users, Receipt, ChartNoAxesCombined, Settings, Plus, Trash2,
-  RefreshCw, Printer, Eye, X, CreditCard, CheckCircle
+  RefreshCw, Printer, Eye, X, CreditCard, CheckCircle, ArrowLeftRight
 } from "lucide-react";
 
 import { db } from "./db";
@@ -52,6 +52,7 @@ function App() {
   const [bankTransactions, setBankTransactions] = useState([]);
   const [stockPurchases, setStockPurchases] = useState([]);
   const [stockBatches, setStockBatches] = useState([]);
+  const [stockTransfers, setStockTransfers] = useState([]);
   const [financialAccounts, setFinancialAccounts] = useState([]);
   const [financialTransactions, setFinancialTransactions] = useState([]);
 
@@ -83,12 +84,20 @@ function App() {
   const [paymentForm, setPaymentForm] = useState({
     saleId: "", amount: "", paymentMethod: "Cash", financialAccountId: ""
   });
+  const [transferForm, setTransferForm] = useState({
+    productId: "",
+    quantity: "",
+    fromLocation: "Main Shop",
+    toLocation: "Second Shop",
+    transferDate: new Date().toISOString().slice(0, 10)
+  });
 
   const menu = [
     { name: "Dashboard", icon: LayoutDashboard },
     { name: "Sales", icon: ShoppingCart },
     { name: "Products", icon: Package },
     { name: "Inventory", icon: Package },
+    { name: "Move Stock", icon: ArrowLeftRight },
     { name: "Customers", icon: Users },
     { name: "Payments", icon: CreditCard },
     { name: "Receipts", icon: Receipt },
@@ -138,6 +147,7 @@ function App() {
               unitCost: openingCost,
               purchaseDate: "2000-01-01",
               createdAt: new Date().toISOString(),
+              location: "Main Shop",
               batchType: "Opening stock"
             });
           }
@@ -152,6 +162,7 @@ function App() {
               unitCost: Number(purchase.buyingPrice || 0),
               purchaseDate: purchase.purchaseDate || today(),
               createdAt: purchase.createdAt || new Date().toISOString(),
+              location: "Main Shop",
               batchType: "Stock purchase"
             });
           }
@@ -167,7 +178,7 @@ function App() {
     try {
       await migrateExistingStock();
 
-      const [p, s, c, pay, ex, bank, purchases, batches, accounts, transactions] =
+      const [p, s, c, pay, ex, bank, purchases, batches, accounts, transactions, transfers] =
         await Promise.all([
           db.products.orderBy("createdAt").reverse().toArray(),
           db.sales.orderBy("createdAt").reverse().toArray(),
@@ -178,7 +189,8 @@ function App() {
           db.stockPurchases.orderBy("createdAt").reverse().toArray(),
           db.stockBatches.toArray(),
           db.financialAccounts.orderBy("createdAt").toArray(),
-          db.financialTransactions.orderBy("createdAt").reverse().toArray()
+          db.financialTransactions.orderBy("createdAt").reverse().toArray(),
+          db.stockTransfers.orderBy("createdAt").reverse().toArray()
         ]);
 
       setProducts(p);
@@ -189,6 +201,7 @@ function App() {
       setBankTransactions(bank);
       setStockPurchases(purchases);
       setStockBatches(batches);
+      setStockTransfers(transfers);
       setFinancialAccounts(accounts);
       setFinancialTransactions(transactions);
     } catch (err) {
@@ -309,6 +322,7 @@ function App() {
             unitCost: buying,
             purchaseDate: today(),
             createdAt: now,
+            location: "Main Shop",
             batchType: "Opening stock"
           });
         }
@@ -384,6 +398,7 @@ function App() {
     const batches = stockBatches
       .filter(b =>
         b.productId === productId &&
+        (b.location || "Main Shop") === "Main Shop" &&
         Number(b.quantityRemaining || 0) > 0
       )
       .sort((a, b) =>
@@ -466,7 +481,10 @@ function App() {
             .where("productId").equals(product.id).toArray();
 
           const availableBatches = batches
-            .filter(b => Number(b.quantityRemaining || 0) > 0)
+            .filter(b =>
+              (b.location || "Main Shop") === "Main Shop" &&
+              Number(b.quantityRemaining || 0) > 0
+            )
             .sort((a, b) =>
               String(a.purchaseDate).localeCompare(String(b.purchaseDate)) ||
               a.id - b.id
@@ -906,6 +924,7 @@ function App() {
             unitCost: buyingPrice,
             purchaseDate: purchaseForm.purchaseDate,
             createdAt: now,
+            location: "Main Shop",
             batchType: "Stock purchase"
           });
 
@@ -936,6 +955,115 @@ function App() {
     }
   }
 
+  async function recordStockTransfer(e) {
+    e.preventDefault();
+    setError("");
+    setSuccess("");
+
+    const productId = Number(transferForm.productId);
+    const quantity = Number(transferForm.quantity);
+    const fromLocation = transferForm.fromLocation;
+    const toLocation = transferForm.toLocation;
+
+    const product = products.find(p => p.id === productId);
+
+    if (!product) return setError("Select a product.");
+    if (!Number.isInteger(quantity) || quantity <= 0)
+      return setError("Enter a valid whole-number quantity.");
+    if (fromLocation === toLocation)
+      return setError("Choose two different shops.");
+    if (!transferForm.transferDate)
+      return setError("Choose a transfer date.");
+
+    try {
+      await db.transaction(
+        "rw",
+        db.stockBatches,
+        db.stockTransfers,
+        async () => {
+          const batches = await db.stockBatches
+            .where("productId")
+            .equals(productId)
+            .toArray();
+
+          const availableBatches = batches
+            .filter(b =>
+              (b.location || "Main Shop") === fromLocation &&
+              Number(b.quantityRemaining || 0) > 0
+            )
+            .sort((a, b) =>
+              String(a.purchaseDate).localeCompare(String(b.purchaseDate)) ||
+              a.id - b.id
+            );
+
+          const available = availableBatches.reduce(
+            (sum, batch) => sum + Number(batch.quantityRemaining || 0),
+            0
+          );
+
+          if (available < quantity) {
+            throw new Error(
+              "Only " + available + " units are available in " + fromLocation + "."
+            );
+          }
+
+          const now = new Date().toISOString();
+
+          const transferId = await db.stockTransfers.add({
+            productId,
+            productName: product.name,
+            quantity,
+            fromLocation,
+            toLocation,
+            transferDate: transferForm.transferDate,
+            createdAt: now
+          });
+
+          let remaining = quantity;
+
+          for (const batch of availableBatches) {
+            if (remaining <= 0) break;
+
+            const batchQuantity = Number(batch.quantityRemaining || 0);
+            const moved = Math.min(remaining, batchQuantity);
+
+            await db.stockBatches.update(batch.id, {
+              quantityRemaining: batchQuantity - moved
+            });
+
+            await db.stockBatches.add({
+              productId,
+              purchaseId: batch.purchaseId || null,
+              supplierName: batch.supplierName || "Transferred stock",
+              quantityReceived: moved,
+              quantityRemaining: moved,
+              unitCost: Number(batch.unitCost || 0),
+              purchaseDate: batch.purchaseDate || transferForm.transferDate,
+              createdAt: now,
+              batchType: "Stock transfer",
+              location: toLocation,
+              transferId
+            });
+
+            remaining -= moved;
+          }
+        }
+      );
+
+      setTransferForm({
+        productId: "",
+        quantity: "",
+        fromLocation: "Main Shop",
+        toLocation: "Second Shop",
+        transferDate: new Date().toISOString().slice(0, 10)
+      });
+
+      setSuccess("Stock transferred successfully.");
+      await loadData();
+    } catch (err) {
+      setError("Stock transfer failed: " + err.message);
+    }
+  }
   async function deleteStockPurchase(id) {
     if (!window.confirm(
       "Delete this purchase record? This will NOT reverse stock or remove its FIFO batch."
@@ -2036,6 +2164,140 @@ function App() {
             </>
           )}
 
+          {/* MOVE STOCK */}
+          {activePage === "Move Stock" && (
+            <>
+              <div className="page-heading">
+                <div>
+                  <h2>Move Stock Between Shops</h2>
+                  <p className="muted">
+                    Transfer products between Main Shop and Second Shop.
+                  </p>
+                </div>
+              </div>
+
+              <div className="form-card">
+                <h3>New Stock Transfer</h3>
+
+                <form onSubmit={recordStockTransfer}>
+                  <div className="form-grid">
+                    <label>
+                      Select Product
+                      <select
+                        required
+                        value={transferForm.productId}
+                        onChange={e => setTransferForm({
+                          ...transferForm,
+                          productId: e.target.value
+                        })}
+                      >
+                        <option value="">Choose product</option>
+                        {products.map(product => (
+                          <option key={product.id} value={product.id}>
+                            {product.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label>
+                      From Shop
+                      <select
+                        value={transferForm.fromLocation}
+                        onChange={e => setTransferForm({
+                          ...transferForm,
+                          fromLocation: e.target.value
+                        })}
+                      >
+                        <option value="Main Shop">Main Shop</option>
+                        <option value="Second Shop">Second Shop</option>
+                      </select>
+                    </label>
+
+                    <label>
+                      To Shop
+                      <select
+                        value={transferForm.toLocation}
+                        onChange={e => setTransferForm({
+                          ...transferForm,
+                          toLocation: e.target.value
+                        })}
+                      >
+                        <option value="Main Shop">Main Shop</option>
+                        <option value="Second Shop">Second Shop</option>
+                      </select>
+                    </label>
+
+                    <label>
+                      Quantity
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        required
+                        value={transferForm.quantity}
+                        onChange={e => setTransferForm({
+                          ...transferForm,
+                          quantity: e.target.value
+                        })}
+                        placeholder="Enter quantity"
+                      />
+                    </label>
+
+                    <label>
+                      Transfer Date
+                      <input
+                        type="date"
+                        required
+                        value={transferForm.transferDate}
+                        onChange={e => setTransferForm({
+                          ...transferForm,
+                          transferDate: e.target.value
+                        })}
+                      />
+                    </label>
+                  </div>
+
+                  <button type="submit" className="primary-button">
+                    <ArrowLeftRight size={17} />
+                    Move Stock
+                  </button>
+                </form>
+              </div>
+
+              <div className="table-card">
+                <h3>Stock Transfer History</h3>
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Product</th>
+                        <th>From</th>
+                        <th>To</th>
+                        <th>Quantity</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stockTransfers.map(transfer => (
+                        <tr key={transfer.id}>
+                          <td>{transfer.transferDate}</td>
+                          <td>{transfer.productName}</td>
+                          <td>{transfer.fromLocation}</td>
+                          <td>{transfer.toLocation}</td>
+                          <td>{transfer.quantity}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {stockTransfers.length === 0 && (
+                    <p>No stock transfers recorded yet.</p>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
           {/* RECEIPTS */}
           {activePage === "Receipts" && (
             <>
@@ -2441,6 +2703,15 @@ function App() {
 }
 
 export default App;
+
+
+
+
+
+
+
+
+
 
 
 
