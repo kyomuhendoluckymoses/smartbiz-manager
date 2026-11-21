@@ -19,7 +19,7 @@ const money = (amount) =>
 const today = () => new Date().toISOString().slice(0, 10);
 
 const emptySale = {
-  productId: "", quantity: "1", customerName: "",
+  productId: "", quantity: "1", sellingPrice: "", customerName: "",
   customerPhone: "", saleType: "Cash Sale",
   amountPaid: "", paymentMethod: "Cash", financialAccountId: "", dueDate: ""
 };
@@ -86,6 +86,9 @@ function App() {
   }, []);
 
   const [products, setProducts] = useState([]);
+  const [trashedProducts, setTrashedProducts] = useState([]);
+  const [stockSearch, setStockSearch] = useState("");
+  const [stockFilter, setStockFilter] = useState("All");
   const [sales, setSales] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [payments, setPayments] = useState([]);
@@ -105,6 +108,11 @@ function App() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  const [editingProductId, setEditingProductId] = useState(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState(null);
+  const [deleteEmail, setDeleteEmail] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [form, setForm] = useState({
     name: "", category: "", sku: "",
     buyingPrice: "", sellingPrice: "", quantity: ""
@@ -137,6 +145,7 @@ function App() {
     { name: "Dashboard", icon: LayoutDashboard },
     { name: "Sales", icon: ShoppingCart },
     { name: "Products", icon: Package },
+    { name: "Trash", icon: Trash2 },
     { name: "Inventory", icon: Package },
     { name: "Move Stock", icon: ArrowLeftRight },
     { name: "Customers", icon: Users },
@@ -234,7 +243,8 @@ function App() {
           db.stockTransfers.orderBy("createdAt").reverse().toArray()
         ]);
 
-      setProducts(p);
+      setProducts(p.filter(product => !product.deletedAt));
+      setTrashedProducts(p.filter(product => Boolean(product.deletedAt)));
       setSales(s);
       setCustomers(c);
       setPayments(pay);
@@ -329,70 +339,163 @@ function App() {
     setSuccess("");
 
     const buying = Number(form.buyingPrice);
-    const selling = Number(form.sellingPrice);
     const quantity = Number(form.quantity);
 
-    if (!form.name.trim() || buying <= 0 || selling <= 0 ||
+    if (!form.name.trim() || buying <= 0 ||
         !Number.isInteger(quantity) || quantity < 0) {
-      setError("Enter a name, valid prices and a valid stock quantity.");
+      setError("Enter a product name, valid buying price and stock quantity.");
       return;
     }
 
     try {
-      await db.transaction("rw", db.products, db.stockBatches, async () => {
-        const now = new Date().toISOString();
-
-        const productId = await db.products.add({
+      if (editingProductId !== null) {
+        await db.products.update(editingProductId, {
           name: form.name.trim(),
           category: form.category.trim(),
           sku: form.sku.trim(),
-          buyingPrice: buying,
-          sellingPrice: selling,
-          quantity,
-          expectedProfit: selling - buying,
-          createdAt: now
+          buyingPrice: buying
         });
 
-        if (quantity > 0) {
-          await db.stockBatches.add({
-            productId,
-            purchaseId: null,
-            supplierName: "Opening stock",
-            quantityReceived: quantity,
-            quantityRemaining: quantity,
-            unitCost: buying,
-            purchaseDate: today(),
-            createdAt: now,
-            location: "Main Shop",
-            batchType: "Opening stock"
+        setEditingProductId(null);
+        setSuccess("Product details updated. Stock history preserved.");
+      } else {
+        await db.transaction("rw", db.products, db.stockBatches, async () => {
+          const now = new Date().toISOString();
+
+          const productId = await db.products.add({
+            name: form.name.trim(),
+            category: form.category.trim(),
+            sku: form.sku.trim(),
+            buyingPrice: buying,
+            quantity,
+            createdAt: now
           });
-        }
-      });
+
+          if (quantity > 0) {
+            await db.stockBatches.add({
+              productId,
+              purchaseId: null,
+              supplierName: "Opening stock",
+              quantityReceived: quantity,
+              quantityRemaining: quantity,
+              unitCost: buying,
+              purchaseDate: today(),
+              createdAt: now,
+              location: "Main Shop",
+              batchType: "Opening stock"
+            });
+          }
+        });
+
+        setSuccess("Product saved successfully.");
+      }
 
       setForm({
-        name: "", category: "", sku: "",
-        buyingPrice: "", sellingPrice: "", quantity: ""
+        name: "",
+        category: "",
+        sku: "",
+        buyingPrice: "",
+        sellingPrice: "",
+        quantity: ""
       });
+
       setShowForm(false);
-      setSuccess("Product saved.");
       await loadData();
     } catch (err) {
       setError("Could not save product: " + err.message);
     }
   }
 
-  async function deleteProduct(id) {
-    if (!window.confirm("Delete this product?")) return;
+  function startEditProduct(product) {
+    setEditingProductId(product.id);
+    setForm({
+      name: product.name || "",
+      category: product.category || "",
+      sku: product.sku || "",
+      buyingPrice: String(product.buyingPrice || ""),
+      sellingPrice: "",
+      quantity: String(product.quantity || 0)
+    });
+    setShowForm(true);
+    setError("");
+    setSuccess("");
+  }
+  function deleteProduct(id) {
+    if (!navigator.onLine || cloudStatus !== "online") {
+      setError("Connect to the internet before deleting a product.");
+      return;
+    }
+
+    setPendingDeleteId(id);
+    setDeleteEmail("");
+    setDeletePassword("");
+    setError("");
+    setSuccess("");
+  }
+
+  async function confirmDeleteProduct(event) {
+    event.preventDefault();
+
+    if (pendingDeleteId === null || deleteBusy) return;
+
+    if (!navigator.onLine || cloudStatus !== "online") {
+      setError("Internet connection is required for owner verification.");
+      return;
+    }
+
+    setDeleteBusy(true);
+    setError("");
 
     try {
-      await db.products.delete(id);
-      setSuccess("Product deleted.");
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email: deleteEmail.trim(),
+          password: deletePassword
+        });
+
+      if (authError) {
+        throw new Error("Owner email or password is incorrect.");
+      }
+
+      if (
+        authData.user?.email?.toLowerCase() !== "friendnew@gmail.com"
+      ) {
+        await supabase.auth.signOut();
+        throw new Error("Only the registered business owner can delete products.");
+      }
+
+      await db.products.update(pendingDeleteId, {
+        deletedAt: new Date().toISOString()
+      });
+
+      setPendingDeleteId(null);
+      setDeleteEmail("");
+      setDeletePassword("");
+      setSuccess("Product moved to Trash. Stock and sales history preserved.");
       await loadData();
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Could not move product to Trash.");
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
+  function cancelDeleteProduct() {
+    if (deleteBusy) return;
+    setPendingDeleteId(null);
+    setDeleteEmail("");
+    setDeletePassword("");
+  }
+  async function restoreProduct(id) {
+    try {
+      await db.products.update(id, { deletedAt: null });
+      setSuccess("Product restored successfully. Stock and sales history preserved.");
+      setError("");
+      await loadData();
+    } catch (err) {
+      setError("Could not restore product: " + err.message);
+    }
+  }
   // CUSTOMERS
   async function findOrCreateCustomer(name, phone) {
     const records = await db.customers.toArray();
@@ -428,9 +531,7 @@ function App() {
 
   const saleQuantity = Number(saleForm.quantity) || 0;
 
-  const saleTotal = selectedProduct
-    ? selectedProduct.sellingPrice * saleQuantity
-    : 0;
+  const saleTotal = selectedProduct ? Number(saleForm.sellingPrice) * saleQuantity : 0;
 
   const amountPaid = Number(saleForm.amountPaid) || 0;
   const remainingBalance = Math.max(0, saleTotal - amountPaid);
@@ -479,6 +580,8 @@ function App() {
     if (!selectedProduct) return setError("Select a product.");
     if (!Number.isInteger(saleQuantity) || saleQuantity <= 0)
       return setError("Enter a valid quantity.");
+    if (!Number.isFinite(Number(saleForm.sellingPrice)) || Number(saleForm.sellingPrice) <= 0)
+      return setError("Enter a valid selling price.");
     if (saleQuantity > selectedProduct.quantity)
       return setError("Insufficient stock.");
     if (!saleForm.customerName.trim() || !saleForm.customerPhone.trim())
@@ -570,7 +673,7 @@ function App() {
             saleForm.customerPhone
           );
 
-          const total = product.sellingPrice * saleQuantity;
+          const total = Number(saleForm.sellingPrice) * saleQuantity;
           const balance = total - amountPaid;
 
           await db.products.update(product.id, {
@@ -586,7 +689,7 @@ function App() {
             productName: product.name,
             quantity: saleQuantity,
             buyingPrice: costOfGoods / saleQuantity,
-            sellingPrice: product.sellingPrice,
+            sellingPrice: Number(saleForm.sellingPrice),
             total,
             costOfGoods,
             grossProfit: total - costOfGoods,
@@ -1126,6 +1229,36 @@ function App() {
     (sum, p) => sum + Number(p.quantity || 0), 0
   );
 
+  const inStockProducts = products.filter(
+    p => Number(p.quantity || 0) > 5
+  );
+
+  const lowStockProducts = products.filter(
+    p => Number(p.quantity || 0) > 0 && Number(p.quantity || 0) <= 5
+  );
+
+  const outOfStockProducts = products.filter(
+    p => Number(p.quantity || 0) <= 0
+  );
+
+  const filteredStockProducts = products.filter(p => {
+    const quantity = Number(p.quantity || 0);
+    const search = stockSearch.trim().toLowerCase();
+
+    const matchesSearch =
+      String(p.name || "").toLowerCase().includes(search) ||
+      String(p.category || "").toLowerCase().includes(search) ||
+      String(p.sku || "").toLowerCase().includes(search);
+
+    const matchesFilter =
+      stockFilter === "All" ||
+      (stockFilter === "In Stock" && quantity > 5) ||
+      (stockFilter === "Low Stock" && quantity > 0 && quantity <= 5) ||
+      (stockFilter === "Out of Stock" && quantity <= 0);
+
+    return matchesSearch && matchesFilter;
+  });
+
   // IMPORTANT: stock value comes from FIFO batches, not product.buyingPrice.
   const totalStockCost = stockBatches.reduce(
     (sum, batch) =>
@@ -1458,24 +1591,18 @@ function App() {
 
               {showForm && (
                 <form className="product-form" onSubmit={addProduct}>
-                  <h3>Register New Product</h3>
+                  <h3>{editingProductId !== null ? "Edit Product" : "Register New Product"}</h3>
                   <div className="form-grid">
                     <label>Product name *<input name="name" value={form.name} onChange={updateField} required /></label>
                     <label>Category<input name="category" value={form.category} onChange={updateField} /></label>
                     <label>Product code<input name="sku" value={form.sku} onChange={updateField} /></label>
                     <label>Buying price (UGX) *<input type="number" min="1" name="buyingPrice" value={form.buyingPrice} onChange={updateField} required /></label>
-                    <label>Selling price (UGX) *<input type="number" min="1" name="sellingPrice" value={form.sellingPrice} onChange={updateField} required /></label>
                     <label>Quantity *<input type="number" min="0" step="1" name="quantity" value={form.quantity} onChange={updateField} required /></label>
-                  </div>
-
-                  <div className="profit-preview">
-                    <span>Expected profit per item</span>
-                    <strong>{money(Number(form.sellingPrice) - Number(form.buyingPrice))}</strong>
                   </div>
 
                   <div className="form-actions">
                     <button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Cancel</button>
-                    <button className="primary-button">Save Product</button>
+                    <button className="primary-button">{editingProductId !== null ? "Update Product" : "Save Product"}</button>
                   </div>
                 </form>
               )}
@@ -1507,6 +1634,9 @@ function App() {
                           <td className="profit">{money(p.sellingPrice - p.buyingPrice)}</td>
                           <td>{p.quantity}</td>
                           <td>
+                            <button className="secondary-button" onClick={() => startEditProduct(p)}>
+                              Edit
+                            </button>
                             <button className="delete-button" onClick={() => deleteProduct(p.id)}>
                               <Trash2 size={17} />
                             </button>
@@ -1541,11 +1671,11 @@ function App() {
                   </label>
 
                   <label>Choose product *
-                    <select value={saleForm.productId} onChange={e => setSaleForm({ ...saleForm, productId: e.target.value })} required>
+                    <select value={saleForm.productId} onChange={e => setSaleForm({ ...saleForm, productId: e.target.value, sellingPrice: "" })} required>
                       <option value="">Select a product</option>
                       {products.filter(p => p.quantity > 0).map(p => (
                         <option key={p.id} value={p.id}>
-                          {p.name} — {money(p.sellingPrice)} (Stock: {p.quantity})
+                          {p.name} (Stock: {p.quantity})
                         </option>
                       ))}
                     </select>
@@ -1553,6 +1683,10 @@ function App() {
 
                   <label>Quantity *
                     <input type="number" min="1" step="1" value={saleForm.quantity} onChange={e => setSaleForm({ ...saleForm, quantity: e.target.value })} required />
+                  </label>
+
+                  <label>Selling price (UGX) *
+                    <input type="number" min="1" step="1" value={saleForm.sellingPrice} onChange={e => setSaleForm({ ...saleForm, sellingPrice: e.target.value })} required />
                   </label>
 
                   <label>Customer name *
@@ -2030,6 +2164,73 @@ function App() {
             </>
           )}
 
+          {/* TRASH */}
+          {activePage === "Trash" && (
+            <>
+              <div className="page-heading">
+                <div>
+                  <h2>Product Trash</h2>
+                  <p className="muted">
+                    Deleted products are kept here until restored.
+                  </p>
+                </div>
+                <button className="refresh-button" onClick={loadData}>
+                  <RefreshCw size={16} /> Refresh
+                </button>
+              </div>
+
+              <div className="table-card">
+                <div className="table-heading">
+                  <h3>Deleted Products ({trashedProducts.length})</h3>
+                </div>
+
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Product</th>
+                        <th>Product Code</th>
+                        <th>Buying Price</th>
+                        <th>Quantity</th>
+                        <th>Date Deleted</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {trashedProducts.map(product => (
+                        <tr key={product.id}>
+                          <td>
+                            <strong>{product.name}</strong>
+                            <small>{product.category || "Uncategorized"}</small>
+                          </td>
+                          <td>{product.sku || "—"}</td>
+                          <td>{money(product.buyingPrice)}</td>
+                          <td>{product.quantity}</td>
+                          <td>
+                            {product.deletedAt
+                              ? new Date(product.deletedAt).toLocaleString()
+                              : "—"}
+                          </td>
+                          <td>
+                            <button
+                              className="secondary-button"
+                              onClick={() => restoreProduct(product.id)}
+                            >
+                              Restore
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {trashedProducts.length === 0 && (
+                    <p>Your Trash is empty. Deleted products will appear here.</p>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
           {/* INVENTORY */}
           {activePage === "Inventory" && (
             <>
@@ -2120,31 +2321,147 @@ function App() {
                 </div>
               </form>
 
+              <div className="cards">
+                <div className="card">
+                  <p>Total Stock Units</p>
+                  <h2>{totalUnits}</h2>
+                  <small>Remaining items in the shop</small>
+                </div>
+                <div className="card">
+                  <p>Products In Stock</p>
+                  <h2 style={{ color: "#16a34a" }}>{inStockProducts.length}</h2>
+                  <small>More than 5 units remaining</small>
+                </div>
+                <div className="card">
+                  <p>Low Stock</p>
+                  <h2 style={{ color: "#d97706" }}>{lowStockProducts.length}</h2>
+                  <small>Only 1–5 units remaining</small>
+                </div>
+                <div className="card">
+                  <p>Out of Stock</p>
+                  <h2 style={{ color: "#dc2626" }}>{outOfStockProducts.length}</h2>
+                  <small>Products with zero remaining</small>
+                </div>
+              </div>
+
               <div className="table-card">
-                <h3>Current Stock by Product</h3>
+                <div className="table-heading">
+                  <div>
+                    <h3>Shop Stock List</h3>
+                    <p className="muted">
+                      Actual remaining quantities after sales and purchases.
+                    </p>
+                  </div>
+                  <button className="refresh-button" onClick={loadData}>
+                    <RefreshCw size={16} /> Refresh
+                  </button>
+                </div>
+
+                <div style={{
+                  display: "flex",
+                  gap: "12px",
+                  flexWrap: "wrap",
+                  margin: "16px 0"
+                }}>
+                  <input
+                    type="search"
+                    placeholder="Search product, category or code..."
+                    value={stockSearch}
+                    onChange={e => setStockSearch(e.target.value)}
+                    style={{
+                      flex: "1 1 240px",
+                      minWidth: 0,
+                      padding: "12px",
+                      border: "1px solid #d1d5db",
+                      borderRadius: "8px"
+                    }}
+                  />
+
+                  <select
+                    value={stockFilter}
+                    onChange={e => setStockFilter(e.target.value)}
+                    style={{
+                      flex: "0 1 190px",
+                      padding: "12px",
+                      border: "1px solid #d1d5db",
+                      borderRadius: "8px"
+                    }}
+                  >
+                    <option value="All">All stock</option>
+                    <option value="In Stock">In stock</option>
+                    <option value="Low Stock">Low stock</option>
+                    <option value="Out of Stock">Out of stock</option>
+                  </select>
+                </div>
+
                 <div className="table-scroll">
                   <table>
                     <thead>
                       <tr>
-                        <th>Product</th><th>Category</th><th>Selling price</th>
-                        <th>Available quantity</th><th>Actual FIFO stock value</th>
+                        <th>Product</th>
+                        <th>Category</th>
+                        <th>Remaining Stock</th>
+                        <th>Stock Status</th>
+                        <th>Actual FIFO Stock Value</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {products.map(p => (
-                        <tr key={p.id}>
-                          <td>{p.name}</td>
-                          <td>{p.category}</td>
-                          <td>{money(p.sellingPrice)}</td>
-                          <td>{p.quantity}</td>
-                          <td>{money(getProductStockValue(p.id))}</td>
-                        </tr>
-                      ))}
+                      {filteredStockProducts.map(p => {
+                        const quantity = Number(p.quantity || 0);
+                        const status = quantity <= 0
+                          ? "Out of Stock"
+                          : quantity <= 5
+                            ? "Low Stock"
+                            : "In Stock";
+
+                        const statusStyle = status === "Out of Stock"
+                          ? { background: "#fee2e2", color: "#b91c1c" }
+                          : status === "Low Stock"
+                            ? { background: "#fef3c7", color: "#92400e" }
+                            : { background: "#dcfce7", color: "#166534" };
+
+                        return (
+                          <tr key={p.id}>
+                            <td>
+                              <strong>{p.name}</strong>
+                              <small>{p.sku || "No product code"}</small>
+                            </td>
+                            <td>{p.category || "Uncategorized"}</td>
+                            <td>
+                              <strong style={{
+                                fontSize: "16px",
+                                color: quantity <= 0 ? "#dc2626" : "inherit"
+                              }}>
+                                {quantity}
+                              </strong>
+                            </td>
+                            <td>
+                              <span style={{
+                                ...statusStyle,
+                                display: "inline-block",
+                                padding: "5px 10px",
+                                borderRadius: "20px",
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                whiteSpace: "nowrap"
+                              }}>
+                                {status}
+                              </span>
+                            </td>
+                            <td>{money(getProductStockValue(p.id))}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
+
+                  {filteredStockProducts.length === 0 && (
+                    <p style={{ padding: "20px", textAlign: "center" }}>
+                      No products match your search or stock filter.
+                    </p>
+                  )}
                 </div>
               </div>
-
               <div className="table-card">
                 <h3>FIFO Stock Batches</h3>
                 <div className="table-scroll">
@@ -2746,6 +3063,68 @@ function App() {
             </div>
           )}
         </section>
+      {pendingDeleteId !== null && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          zIndex: 9999, padding: "20px"
+        }}>
+          <form onSubmit={confirmDeleteProduct} style={{
+            background: "white", color: "#222", padding: "25px",
+            borderRadius: "14px", width: "100%", maxWidth: "420px"
+          }}>
+            <h2>Owner Verification</h2>
+            <p>Enter the business owner's credentials to move this product to Trash.</p>
+
+            <label style={{ display: "block", marginBottom: "12px" }}>
+              Owner email
+              <input
+                type="email"
+                value={deleteEmail}
+                onChange={e => setDeleteEmail(e.target.value)}
+                required
+                autoComplete="username"
+                style={{ display: "block", width: "100%", padding: "12px", marginTop: "5px" }}
+              />
+            </label>
+
+            <label style={{ display: "block", marginBottom: "15px" }}>
+              Owner password
+              <input
+                type="password"
+                value={deletePassword}
+                onChange={e => setDeletePassword(e.target.value)}
+                required
+                autoComplete="current-password"
+                style={{ display: "block", width: "100%", padding: "12px", marginTop: "5px" }}
+              />
+            </label>
+
+            <p style={{ fontSize: "13px", color: "#666" }}>
+              Only friendnew@gmail.com is authorized.
+            </p>
+
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={cancelDeleteProduct}
+                disabled={deleteBusy}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                className="primary-button"
+                disabled={deleteBusy}
+              >
+                {deleteBusy ? "Verifying..." : "Verify and Move to Trash"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
       </main>
     </div>
   );
