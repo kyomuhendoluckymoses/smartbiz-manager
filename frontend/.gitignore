@@ -1,0 +1,56 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Local databases and business records
+*.db
+*.sqlite
+*.sqlite3
+database/
+backups/
+*.backup
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+
+# Temporary files
+*.tmp
+*.bak
+*.log
+
+# Local backup files - keep out of deployment
+src/App-before-*.jsx
+src/App-css-before-*.css
+src/db-before-*.backup
+public/.icon-192.png
+
+src/db-before-*
+.vercel
