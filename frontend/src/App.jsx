@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 
 import { db } from "./db";
+import { syncToCloud } from "./sync";
 import { supabase, supabaseUrl, supabaseKey } from "./lib/supabase";
 import "./App.css";
 
@@ -407,6 +408,7 @@ function App() {
 
       setShowForm(false);
       await loadData();
+      syncToCloud();
     } catch (err) {
       setError("Could not save product: " + err.message);
     }
@@ -749,6 +751,7 @@ function App() {
       setSaleFormOpen(false);
       setSuccess("Sale saved using FIFO costing. Receipt: " + receiptNumber);
       await loadData();
+      syncToCloud();
     } catch (err) {
       setError("Sale failed: " + err.message);
     }
@@ -890,6 +893,7 @@ function App() {
       setExpenseForm(emptyExpense);
       setSuccess("Expense recorded.");
       await loadData();
+      syncToCloud();
     } catch (err) {
       setError(err.message);
     }
@@ -3328,6 +3332,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
