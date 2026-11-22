@@ -116,7 +116,7 @@ function App() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [form, setForm] = useState({
     name: "", category: "", sku: "",
-    buyingPrice: "", , quantity: ""
+    buyingPrice: "", sellingPrice: "", quantity: ""
   });
 
   const [saleForm, setSaleForm] = useState(emptySale);
@@ -3202,6 +3202,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
