@@ -19,7 +19,7 @@ const money = (amount) =>
 const today = () => new Date().toISOString().slice(0, 10);
 
 const emptySale = {
-  productId: "", quantity: "1", sellingPrice: "", location: "Main Shop", customerName: "",
+  productId: "", quantity: "1", , location: "Main Shop", customerName: "",
   customerPhone: "", saleType: "Cash Sale",
   amountPaid: "", paymentMethod: "Cash", financialAccountId: "", dueDate: ""
 };
@@ -116,7 +116,7 @@ function App() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [form, setForm] = useState({
     name: "", category: "", sku: "",
-    buyingPrice: "", sellingPrice: "", quantity: ""
+    buyingPrice: "", , quantity: ""
   });
 
   const [saleForm, setSaleForm] = useState(emptySale);
@@ -130,7 +130,7 @@ function App() {
     openingBalance: "0"
   });
   const [purchaseForm, setPurchaseForm] = useState(emptyPurchase);
-  const [purchaseItems, setPurchaseItems] = useState([{ productId: "", productName: "", quantity: "", buyingPrice: "", sellingPrice: "" }]);
+  const [purchaseItems, setPurchaseItems] = useState([{ productId: "", productName: "", quantity: "", buyingPrice: "",  }]);
 
   const [paymentForm, setPaymentForm] = useState({
     saleId: "", amount: "", paymentMethod: "Cash", financialAccountId: ""
@@ -402,7 +402,7 @@ function App() {
         category: "",
         sku: "",
         buyingPrice: "",
-        sellingPrice: "",
+        ,
         quantity: ""
       });
 
@@ -1021,7 +1021,7 @@ function App() {
         updated.productId = matchedProduct ? String(matchedProduct.id) : "";
         if (matchedProduct) {
           updated.buyingPrice = String(matchedProduct.buyingPrice || "");
-          updated.sellingPrice = String(matchedProduct.sellingPrice || "");
+          
         } else if (item.productId) {
           updated.buyingPrice = "";
           updated.sellingPrice = "";
@@ -1034,7 +1034,7 @@ function App() {
 
   function addPurchaseItem() {
     setPurchaseItems(items => [...items, {
-      productId: "", productName: "", quantity: "", buyingPrice: "", sellingPrice: ""
+      productId: "", productName: "", quantity: "", buyingPrice: "", 
     }]);
   }
 
@@ -1064,8 +1064,7 @@ function App() {
         return setError("Enter a valid whole-number quantity for item " + (i + 1) + ".");
       if (!Number.isFinite(Number(item.buyingPrice)) || Number(item.buyingPrice) <= 0)
         return setError("Enter a valid buying price for item " + (i + 1) + ".");
-      if (!Number.isFinite(Number(item.sellingPrice)) || Number(item.sellingPrice) <= 0)
-        return setError("Enter a valid selling price for item " + (i + 1) + ".");
+      
     }
 
     const payingAccount = purchaseForm.paymentMethod === "Credit"
@@ -1102,7 +1101,7 @@ function App() {
 
             const quantity = Number(item.quantity);
             const buyingPrice = Number(item.buyingPrice);
-            const sellingPrice = Number(item.sellingPrice);
+            
 
             if (!product) {
               const newProductId = await db.products.add({
@@ -1173,7 +1172,7 @@ function App() {
 
       setPurchaseForm(emptyPurchase);
       setPurchaseItems([{
-        productId: "", productName: "", quantity: "", buyingPrice: "", sellingPrice: ""
+        productId: "", productName: "", quantity: "", buyingPrice: "", 
       }]);
       setSuccess("All stock items saved successfully. Each item has its own FIFO batch and purchase record.");
       await loadData();
@@ -1700,7 +1699,6 @@ function App() {
                     <label>Category<input name="category" value={form.category} onChange={updateField} /></label>
                     <label>Product code<input name="sku" value={form.sku} onChange={updateField} /></label>
                     <label>Buying price (UGX) *<input type="number" min="1" name="buyingPrice" value={form.buyingPrice} onChange={updateField} required /></label>
-                    <label>Selling price (UGX) *<input type="number" min="1" name="sellingPrice" value={form.sellingPrice} onChange={updateField} required /></label>
                     <label>Quantity *<input type="number" min="0" step="1" name="quantity" value={form.quantity} onChange={updateField} required /></label>
                   </div>
 
@@ -2384,8 +2382,7 @@ function App() {
                               </datalist>
                             )}
                           </label>
-                    <label>Selling price (UGX) *<input type="number" min="1" name="sellingPrice" value={form.sellingPrice} onChange={updateField} required /></label>
-                          <label>Quantity *
+                    <label>Quantity *
                             <input type="number" min="1" step="1" value={item.quantity} onChange={e => updatePurchaseItem(index, "quantity", e.target.value)} required />
                           </label>
                           <label>Buying price per item (UGX) *
@@ -2411,7 +2408,7 @@ function App() {
                 </div>
 
                 <div className="form-actions">
-                  <button type="button" className="secondary-button" onClick={() => { setPurchaseForm(emptyPurchase); setPurchaseItems([{ productId: "", productName: "", quantity: "", buyingPrice: "", sellingPrice: "" }]); }}>Clear Form</button>
+                  <button type="button" className="secondary-button" onClick={() => { setPurchaseForm(emptyPurchase); setPurchaseItems([{ productId: "", productName: "", quantity: "", buyingPrice: "",  }]); }}>Clear Form</button>
                   <button className="primary-button"><Plus size={18} /> Save All Items</button>
                 </div>
               </form>
@@ -3205,6 +3202,10 @@ function App() {
 }
 
 export default App;
+
+
+
+
 
 
 
