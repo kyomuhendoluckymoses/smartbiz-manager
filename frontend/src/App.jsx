@@ -19,7 +19,7 @@ const money = (amount) =>
 const today = () => new Date().toISOString().slice(0, 10);
 
 const emptySale = {
-  productId: "", quantity: "1", , location: "Main Shop", customerName: "",
+  productId: "", quantity: "1", sellingPrice: "", location: "Main Shop", customerName: "",
   customerPhone: "", saleType: "Cash Sale",
   amountPaid: "", paymentMethod: "Cash", financialAccountId: "", dueDate: ""
 };
@@ -3202,6 +3202,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
