@@ -338,19 +338,17 @@ function App() {
     setError("");
   }
 
-  async function addProduct(e) {
+    async function addProduct(e) {
     e.preventDefault();
     setError("");
     setSuccess("");
 
-    // FIX: Use parseFloat and parseInt for robust number conversion
     const buying = parseFloat(form.buyingPrice);
-    const selling = parseFloat(form.sellingPrice || 0);
+    const selling = parseFloat(form.sellingPrice);
     const quantity = parseInt(form.quantity, 10);
 
-    if (!form.name.trim() || isNaN(buying) || buying <= 0 ||
-        isNaN(quantity) || quantity < 0) {
-      setError("Enter a product name, valid buying price and stock quantity.");
+    if (!form.name.trim() || isNaN(buying) || buying <= 0 || isNaN(selling) || selling <= 0 || isNaN(quantity) || quantity < 0) {
+      setError("Enter a product name, valid buying price, selling price and stock quantity.");
       return;
     }
 
@@ -3208,6 +3206,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
