@@ -2660,7 +2660,72 @@ function App() {
               </div>
 
 
-            </>
+            
+              <div className="table-card" style={{ marginTop: "24px" }}>
+                <h3>Stock Movement History</h3>
+                <p className="muted">This shows exactly why stock is reducing. Look at the "Type" column.</p>
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Product</th>
+                        <th>Type</th>
+                        <th>Quantity Change</th>
+                        <th>Shop</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        ...stockPurchases.map(p => ({
+                          date: p.purchaseDate || p.createdAt,
+                          product: p.productName,
+                          type: "Stock In (Purchase)",
+                          qty: "+" + p.quantity,
+                          shop: p.location || "Main Shop"
+                        })),
+                        ...sales.map(s => ({
+                          date: s.createdAt,
+                          product: s.productName,
+                          type: "Sale (Sold)",
+                          qty: "-" + s.quantity,
+                          shop: s.location || "Main Shop"
+                        })),
+                        ...stockTransfers.map(t => ({
+                          date: t.transferDate,
+                          product: t.productName,
+                          type: "Transfer Out",
+                          qty: "-" + t.quantity,
+                          shop: t.fromLocation
+                        })),
+                        ...stockTransfers.map(t => ({
+                          date: t.transferDate,
+                          product: t.productName,
+                          type: "Transfer In",
+                          qty: "+" + t.quantity,
+                          shop: t.toLocation
+                        }))
+                      ]
+                      .sort((a, b) => new Date(b.date) - new Date(a.date))
+                      .slice(0, 50)
+                      .map((log, index) => (
+                        <tr key={index}>
+                          <td>{new Date(log.date).toLocaleDateString()}</td>
+                          <td>{log.product}</td>
+                          <td style={{ color: log.qty.startsWith("-") ? "#dc2626" : "#16a34a", fontWeight: "bold" }}>
+                            {log.type}
+                          </td>
+                          <td style={{ color: log.qty.startsWith("-") ? "#dc2626" : "#16a34a", fontWeight: "bold" }}>
+                            {log.qty}
+                          </td>
+                          <td>{log.shop}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+</>
           )}
 
           {/* MOVE STOCK */}
@@ -3263,6 +3328,8 @@ function App() {
 }
 
 export default App;
+
+
 
 
 
