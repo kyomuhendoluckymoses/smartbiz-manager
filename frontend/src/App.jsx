@@ -1774,13 +1774,13 @@ function App() {
 
                   <label>Items *
                     <select value={saleForm.productId} onChange={e => {
-                      const match = products.find(p =>
-                        String(p.id) === e.target.value
-                      );
+                      const selectedId = e.target.value;
+                      const match = products.find(p => String(p.id) === selectedId);
+                      
                       setSaleForm({
                         ...saleForm,
-                        productId: match ? String(match.id) : "",
-                        sellingPrice: match ? String(match.sellingPrice || "") : ""
+                        productId: selectedId,
+                        sellingPrice: match && match.sellingPrice ? String(match.sellingPrice) : ""
                       });
                       setError("");
                     }} required>
@@ -3205,6 +3205,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
