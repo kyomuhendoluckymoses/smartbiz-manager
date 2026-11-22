@@ -402,7 +402,6 @@ function App() {
         category: "",
         sku: "",
         buyingPrice: "",
-        ,
         quantity: ""
       });
 
@@ -3202,6 +3201,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
