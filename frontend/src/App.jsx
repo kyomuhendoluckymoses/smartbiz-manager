@@ -41,7 +41,7 @@ const emptyPurchase = {
 
 function App() {
   const [activePage, setActivePage] = useState("Dashboard");
-  const [hasEntered, setHasEntered] = useState(() => localStorage.getItem('smartbiz-welcome-complete') === 'true');
+  const [hasEntered, setHasEntered] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [reportPeriod, setReportPeriod] = useState('month');
   const [cloudStatus, setCloudStatus] = useState("checking");
