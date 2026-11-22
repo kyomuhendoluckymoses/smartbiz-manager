@@ -335,6 +335,7 @@ function App() {
   // PRODUCTS
   function updateField(e) {
     setForm({ ...form, [e.target.name]: e.target.value });
+    setError("");
   }
 
   async function addProduct(e) {
@@ -342,12 +343,13 @@ function App() {
     setError("");
     setSuccess("");
 
-    const buying = Number(form.buyingPrice);
-    const selling = Number(form.sellingPrice);
-    const quantity = Number(form.quantity);
+    // FIX: Use parseFloat and parseInt for robust number conversion
+    const buying = parseFloat(form.buyingPrice);
+    const selling = parseFloat(form.sellingPrice || 0);
+    const quantity = parseInt(form.quantity, 10);
 
-    if (!form.name.trim() || buying <= 0 || selling <= 0 ||
-        !Number.isInteger(quantity) || quantity < 0) {
+    if (!form.name.trim() || isNaN(buying) || buying <= 0 ||
+        isNaN(quantity) || quantity < 0) {
       setError("Enter a product name, valid buying price and stock quantity.");
       return;
     }
@@ -1700,6 +1702,7 @@ function App() {
                     <label>Category<input name="category" value={form.category} onChange={updateField} /></label>
                     <label>Product code<input name="sku" value={form.sku} onChange={updateField} /></label>
                     <label>Buying price (UGX) *<input type="number" min="1" name="buyingPrice" value={form.buyingPrice} onChange={updateField} required /></label>
+                    <label>Selling price (UGX) *<input type="number" min="1" name="sellingPrice" value={form.sellingPrice} onChange={updateField} required /></label>
                     <label>Quantity *<input type="number" min="0" step="1" name="quantity" value={form.quantity} onChange={updateField} required /></label>
                   </div>
 
@@ -1721,9 +1724,7 @@ function App() {
                     <thead>
                       <tr>
                         <th>Product</th>
-                        <th>Default buying price</th>
-                        <th>Selling price</th>
-                        <th>Profit/item*</th>
+                        <th>Buying price</th>
                         <th>Quantity</th>
                         <th>Action</th>
                       </tr>
@@ -1733,8 +1734,6 @@ function App() {
                         <tr key={p.id}>
                           <td><strong>{p.name}</strong><small>{p.category}</small></td>
                           <td>{money(p.buyingPrice)}</td>
-                          <td>{money(p.sellingPrice)}</td>
-                          <td className="profit">{money(p.sellingPrice - p.buyingPrice)}</td>
                           <td>{p.quantity}</td>
                           <td>
                             <button className="secondary-button" onClick={() => startEditProduct(p)}>
@@ -1748,7 +1747,6 @@ function App() {
                       ))}
                     </tbody>
                   </table>
-                  <p className="muted">*Actual sale profit uses FIFO batch costs.</p>
                   {products.length === 0 && <p>No products registered.</p>}
                 </div>
               </div>
@@ -1797,7 +1795,6 @@ function App() {
                       ))}
                     </select>
                   </label>
-
                   <label>Quantity *
                     <input type="number" min="1" step="1" value={saleForm.quantity} onChange={e => setSaleForm({ ...saleForm, quantity: e.target.value })} required />
                   </label>
@@ -2390,6 +2387,7 @@ function App() {
                               </datalist>
                             )}
                           </label>
+                    <label>Selling price (UGX) *<input type="number" min="1" name="sellingPrice" value={form.sellingPrice} onChange={updateField} required /></label>
                           <label>Quantity *
                             <input type="number" min="1" step="1" value={item.quantity} onChange={e => updatePurchaseItem(index, "quantity", e.target.value)} required />
                           </label>
@@ -3088,11 +3086,7 @@ function App() {
                   <label>Account name *
                     <input
                       value={accountForm.name}
-                      onChange={e => setAccountForm({
-                        ...accountForm,
-                        name: e.target.value
-                      })}
-                      placeholder="e.g. Cash, Stanbic Business"
+                      onChange={e => setAccountForm({ ...accountForm, name: e.target.value })}
                       required
                     />
                   </label>
@@ -3100,75 +3094,43 @@ function App() {
                   <label>Account type *
                     <select
                       value={accountForm.type}
-                      onChange={e => setAccountForm({
-                        ...accountForm,
-                        type: e.target.value
-                      })}
+                      onChange={e => setAccountForm({ ...accountForm, type: e.target.value })}
                     >
-                      <option value="Cash">Cash</option>
-                      <option value="Bank">Bank</option>
-                      <option value="Mobile Money">Mobile Money</option>
+                      <option>Cash</option>
+                      <option>Bank</option>
+                      <option>Mobile Money</option>
+                      <option>Other</option>
                     </select>
                   </label>
 
-                  <label>Bank or service provider
+                  <label>Provider (e.g. Stanbic, MTN)
                     <input
                       value={accountForm.provider}
-                      onChange={e => setAccountForm({
-                        ...accountForm,
-                        provider: e.target.value
-                      })}
-                      placeholder="e.g. Stanbic, MTN, Airtel"
+                      onChange={e => setAccountForm({ ...accountForm, provider: e.target.value })}
                     />
                   </label>
 
-                  <label>Opening balance (UGX)
+                  <label>Opening Balance (UGX)
                     <input
                       type="number"
                       min="0"
-                      step="1"
                       value={accountForm.openingBalance}
-                      onChange={e => setAccountForm({
-                        ...accountForm,
-                        openingBalance: e.target.value
-                      })}
-                      required
+                      onChange={e => setAccountForm({ ...accountForm, openingBalance: e.target.value })}
                     />
                   </label>
                 </div>
 
                 <div className="form-actions">
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => setAccountForm({
-                      name: "",
-                      type: "Cash",
-                      provider: "",
-                      openingBalance: "0"
-                    })}
-                  >
-                    Clear Form
-                  </button>
-
-                  <button className="primary-button">
-                    <Plus size={18} /> Create Account
-                  </button>
+                  <button className="primary-button"><Plus size={18} /> Create Account</button>
                 </div>
               </form>
 
               <div className="table-card">
-                <h3>Your Financial Accounts</h3>
-
+                <h3>Financial Accounts and Balances</h3>
                 <div className="table-scroll">
                   <table>
                     <thead>
-                      <tr>
-                        <th>Account</th>
-                        <th>Type</th>
-                        <th>Provider</th>
-                        <th>Balance</th>
-                      </tr>
+                      <tr><th>Account Name</th><th>Type</th><th>Provider</th><th>Balance</th></tr>
                     </thead>
                     <tbody>
                       {financialAccounts.map(account => {
@@ -3176,15 +3138,12 @@ function App() {
                           .filter(t => t.accountId === account.id)
                           .reduce((sum, t) => {
                             const amount = Number(t.amount || 0);
-
                             if (["Opening Balance", "Deposit", "Income", "Transfer In"].includes(t.transactionType)) {
                               return sum + amount;
                             }
-
                             if (["Withdrawal", "Expense", "Stock Purchase", "Transfer Out"].includes(t.transactionType)) {
                               return sum - amount;
                             }
-
                             return sum;
                           }, 0);
 
@@ -3193,18 +3152,43 @@ function App() {
                             <td>{account.name}</td>
                             <td>{account.type}</td>
                             <td>{account.provider || "—"}</td>
-                            <td className={balance >= 0 ? "profit" : "debt"}>
-                              {money(balance)}
+                            <td className={balance >= 0 ? "profit" : "debt"}>{money(balance)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  {financialAccounts.length === 0 && <p>No financial accounts created yet.</p>}
+                </div>
+              </div>
+
+              <div className="table-card">
+                <h3>Financial Transaction History</h3>
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr><th>Date</th><th>Account</th><th>Type</th><th>Category</th><th>Description</th><th>Amount</th></tr>
+                    </thead>
+                    <tbody>
+                      {financialTransactions.map(t => {
+                        const account = financialAccounts.find(a => a.id === t.accountId);
+                        const isIncome = ["Opening Balance", "Deposit", "Income", "Transfer In"].includes(t.transactionType);
+                        return (
+                          <tr key={t.id}>
+                            <td>{t.transactionDate}</td>
+                            <td>{account?.name || "Unknown"}</td>
+                            <td>{t.transactionType}</td>
+                            <td>{t.category}</td>
+                            <td>{t.description}</td>
+                            <td className={isIncome ? "profit" : "debt"}>
+                              {isIncome ? "+" : "-"}{money(t.amount)}
                             </td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
-
-                  {financialAccounts.length === 0 && (
-                    <p>No financial accounts yet. Create your first account above.</p>
-                  )}
+                  {financialTransactions.length === 0 && <p>No financial transactions recorded yet.</p>}
                 </div>
               </div>
             </>
@@ -3213,108 +3197,17 @@ function App() {
           {activePage === "Settings" && (
             <div className="welcome-card">
               <h2>Settings</h2>
-              <p>Business settings will be expanded in a later development step.</p>
+              <p>Application settings and configurations.</p>
             </div>
           )}
+
         </section>
-      {pendingDeleteId !== null && (
-        <div style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          zIndex: 9999, padding: "20px"
-        }}>
-          <form onSubmit={confirmDeleteProduct} style={{
-            background: "white", color: "#222", padding: "25px",
-            borderRadius: "14px", width: "100%", maxWidth: "420px"
-          }}>
-            <h2>Owner Verification</h2>
-            <p>Enter the business owner's credentials to move this product to Trash.</p>
-
-            <label style={{ display: "block", marginBottom: "12px" }}>
-              Owner email
-              <input
-                type="email"
-                value={deleteEmail}
-                onChange={e => setDeleteEmail(e.target.value)}
-                required
-                autoComplete="username"
-                style={{ display: "block", width: "100%", padding: "12px", marginTop: "5px" }}
-              />
-            </label>
-
-            <label style={{ display: "block", marginBottom: "15px" }}>
-              Owner password
-              <input
-                type="password"
-                value={deletePassword}
-                onChange={e => setDeletePassword(e.target.value)}
-                required
-                autoComplete="current-password"
-                style={{ display: "block", width: "100%", padding: "12px", marginTop: "5px" }}
-              />
-            </label>
-
-            <p style={{ fontSize: "13px", color: "#666" }}>
-              Only friendnew@gmail.com is authorized.
-            </p>
-
-            <div style={{ display: "flex", gap: "10px" }}>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={cancelDeleteProduct}
-                disabled={deleteBusy}
-              >
-                Cancel
-              </button>
-
-              <button
-                type="submit"
-                className="primary-button"
-                disabled={deleteBusy}
-              >
-                {deleteBusy ? "Verifying..." : "Verify and Move to Trash"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
       </main>
     </div>
   );
 }
 
 export default App;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
