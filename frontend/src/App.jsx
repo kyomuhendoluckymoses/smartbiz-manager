@@ -1775,13 +1775,12 @@ function App() {
                   <label>Items *
                     <select value={saleForm.productId} onChange={e => {
                       const match = products.find(p =>
-                        String(p.id) === e.target.value &&
-                        getShopStock(p.id, saleForm.location || "Main Shop") > 0
+                        String(p.id) === e.target.value
                       );
                       setSaleForm({
                         ...saleForm,
                         productId: match ? String(match.id) : "",
-                        sellingPrice: match ? String(match.sellingPrice) : ""
+                        sellingPrice: match ? String(match.sellingPrice || "") : ""
                       });
                       setError("");
                     }} required>
@@ -3206,6 +3205,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
