@@ -5,7 +5,7 @@ import {
   RefreshCw, Printer, Eye, X, CreditCard, CheckCircle, ArrowLeftRight
 } from "lucide-react";
 
-import { db } from "./db";
+import { db, deleteWithSync } from "./db";
 import { syncToCloud } from "./sync";
 import { supabase, supabaseUrl, supabaseKey } from "./lib/supabase";
 import "./App.css";
@@ -154,6 +154,7 @@ function App() {
     { name: "Stock Sold", icon: ShoppingCart },
     { name: "Move Stock", icon: ArrowLeftRight },
     { name: "Customers", icon: Users },
+    { name: "Creditors", icon: Users },
     { name: "Payments", icon: CreditCard },
     { name: "Receipts", icon: Receipt },
     { name: "Expenses", icon: Wallet },
@@ -333,6 +334,48 @@ function App() {
     }
   }
 
+  // QUICK CASH ACCOUNT CREATION FROM PAYMENTS
+  async function createCashAccountFromPayments() {
+    setError("");
+    setSuccess("");
+
+    try {
+      const existing = financialAccounts.find(
+        account => account.type === "Cash" &&
+          account.name.trim().toLowerCase() === "cash in hand"
+      );
+
+      if (existing) {
+        setPaymentForm(current => ({
+          ...current,
+          paymentMethod: "Cash",
+          financialAccountId: String(existing.id)
+        }));
+        return;
+      }
+
+      const now = new Date().toISOString();
+
+      const accountId = await db.financialAccounts.add({
+        name: "Cash in Hand",
+        type: "Cash",
+        provider: "",
+        createdAt: now
+      });
+
+      await loadData();
+
+      setPaymentForm(current => ({
+        ...current,
+        paymentMethod: "Cash",
+        financialAccountId: String(accountId)
+      }));
+
+      setSuccess("Cash in Hand account created and selected successfully.");
+    } catch (err) {
+      setError("Could not create Cash in Hand account: " + err.message);
+    }
+  }
   // PRODUCTS
   function updateField(e) {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -565,7 +608,10 @@ function App() {
 
   const saleTotal = selectedProduct ? Number(saleForm.sellingPrice) * saleQuantity : 0;
 
-  const amountPaid = saleTotal;
+  // Cash sales are paid in full. Credit and layaway sales may be paid partially.
+  const amountPaid = saleForm.saleType === "Cash Sale"
+    ? saleTotal
+    : Math.max(0, Number(saleForm.amountPaid) || 0);
   const remainingBalance = Math.max(0, saleTotal - amountPaid);
 
   function calculateFifoPreview(productId, quantity) {
@@ -616,7 +662,23 @@ function App() {
       return setError("Enter a valid selling price.");
     if (!fifoPreview.available)
       return setError("There is not enough stock in " + (saleForm.location || "Main Shop") + ".");
+    if (!["Cash Sale", "Credit Sale", "Layaway"].includes(saleForm.saleType))
+      return setError("Choose a valid sale type.");
+    if (saleForm.saleType !== "Cash Sale" && !saleForm.customerName.trim())
+      return setError("Enter the customer's name for a credit or installment transaction.");
+    if (amountPaid > saleTotal)
+      return setError("The initial payment cannot exceed the sale total.");
 
+    const receivingAccount = amountPaid > 0
+      ? financialAccounts.find(account =>
+          String(account.id) === String(saleForm.financialAccountId)
+        )
+      : null;
+
+    if (amountPaid > 0 && !receivingAccount)
+      return setError("Choose the account receiving the customer's payment.");
+    if (receivingAccount && receivingAccount.type !== saleForm.paymentMethod)
+      return setError("The selected account does not match the payment method.");
 
     try {
       const receiptNumber = "SB-" + Date.now();
@@ -709,18 +771,17 @@ function App() {
             stockAllocations,
             amountPaid,
             balance,
-            saleType: "Cash Sale",
-            dueDate: null,
-            fulfillmentStatus: "Collected",
-            paymentStatus: "Paid",
+            saleType: saleForm.saleType,
+            dueDate: saleForm.dueDate || null,
+            fulfillmentStatus: saleForm.saleType === "Layaway"
+              ? (remainingBalance <= 0 ? "Ready for collection" : "Awaiting full payment")
+              : "Collected",
+            paymentStatus: remainingBalance <= 0 ? "Paid" : "Partially Paid",
             paymentMethod: saleForm.paymentMethod,
             createdAt: now
           });
 
-          const receivingAccount = financialAccounts.find(
-            account => account.type === saleForm.paymentMethod
-          );
-
+          // Deduct stock when the customer receives goods on credit; do not wait for installments.
           if (amountPaid > 0) {
             await db.payments.add({
               customerId: customer.id,
@@ -901,7 +962,7 @@ function App() {
 
   async function deleteExpense(id) {
     if (!window.confirm("Delete this expense?")) return;
-    await db.expenses.delete(id);
+    await deleteWithSync("expenses", id);
     setSuccess("Expense deleted.");
     await loadData();
   }
@@ -968,7 +1029,7 @@ function App() {
 
   async function deleteBankTransaction(id) {
     if (!window.confirm("Delete this bank transaction?")) return;
-    await db.bankTransactions.delete(id);
+    await deleteWithSync("bankTransactions", id);
     setSuccess("Bank transaction deleted.");
     await loadData();
   }
@@ -1301,7 +1362,7 @@ function App() {
     )) return;
 
     try {
-      await db.stockPurchases.delete(id);
+      await deleteWithSync("stockPurchases", id);
       setSuccess("Purchase history record deleted. Stock was not changed.");
       await loadData();
     } catch (err) {
@@ -1811,18 +1872,79 @@ function App() {
 
                   
 
-                  <label>Payment method
-                    <select value={saleForm.paymentMethod} onChange={e => setSaleForm({ ...saleForm, paymentMethod: e.target.value })}>
-                      <option>Cash</option>
-                      <option>Bank</option>
-                      <option>Mobile Money</option>
-                      <option>Other</option>
+                  <label>Sale type *
+                    <select
+                      value={saleForm.saleType}
+                      onChange={e => setSaleForm({
+                        ...saleForm,
+                        saleType: e.target.value,
+                        amountPaid: e.target.value === "Cash Sale" ? "" : saleForm.amountPaid,
+                        financialAccountId: ""
+                      })}
+                      required
+                    >
+                      <option value="Cash Sale">Cash Sale — paid in full</option>
+                      <option value="Credit Sale">Credit Sale — take goods now, pay in installments</option>
+                      <option value="Layaway">Layaway — reserve goods until fully paid</option>
                     </select>
                   </label>
 
-                  
+                  {saleForm.saleType !== "Cash Sale" && (
+                    <>
+                      <label>Initial amount paid (UGX)
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          max={saleTotal || undefined}
+                          value={saleForm.amountPaid}
+                          onChange={e => setSaleForm({ ...saleForm, amountPaid: e.target.value })}
+                        />
+                      </label>
+                      <label>Payment due date
+                        <input
+                          type="date"
+                          value={saleForm.dueDate}
+                          onChange={e => setSaleForm({ ...saleForm, dueDate: e.target.value })}
+                        />
+                      </label>
+                    </>
+                  )}
 
-                  
+                  {amountPaid > 0 && (
+                    <>
+                      <label>Payment method *
+                        <select
+                          value={saleForm.paymentMethod}
+                          onChange={e => setSaleForm({
+                            ...saleForm,
+                            paymentMethod: e.target.value,
+                            financialAccountId: ""
+                          })}
+                          required
+                        >
+                          <option>Cash</option>
+                          <option>Bank</option>
+                          <option>Mobile Money</option>
+                          <option>Other</option>
+                        </select>
+                      </label>
+                      <label>Receive payment into account *
+                        <select
+                          value={saleForm.financialAccountId}
+                          onChange={e => setSaleForm({ ...saleForm, financialAccountId: e.target.value })}
+                          required
+                        >
+                          <option value="">Choose receiving account</option>
+                          {financialAccounts
+                            .filter(account => account.type === saleForm.paymentMethod)
+                            .map(account => (
+                              <option key={account.id} value={account.id}>{account.name}</option>
+                            ))}
+                        </select>
+                      </label>
+                    </>
+                  )}
                 </div>
 
                 <div className="welcome-card">
@@ -1904,6 +2026,114 @@ function App() {
             </>
           )}
 
+          {/* CREDITORS */}
+          {activePage === "Creditors" && (
+            <>
+              <h2>Creditors / Customers Who Owe the Business</h2>
+              <p className="muted">
+                Customers who received products on credit and still have an unpaid balance.
+                Stock is deducted when the credit sale is recorded.
+              </p>
+
+              <div className="cards">
+                <div className="card">
+                  <p>Total credit outstanding</p>
+                  <h2 className="debt">{money(totalCredit)}</h2>
+                </div>
+                <div className="card">
+                  <p>Customers with outstanding credit</p>
+                  <h2>{new Set(sales
+                    .filter(s => s.saleType === "Credit Sale" && Number(s.balance || 0) > 0)
+                    .map(s => s.customerId)).size}</h2>
+                </div>
+                <div className="card">
+                  <p>Total received on credit sales</p>
+                  <h2 className="profit">{money(sales
+                    .filter(s => s.saleType === "Credit Sale")
+                    .reduce((sum, s) => sum + Number(s.amountPaid || 0), 0))}</h2>
+                </div>
+              </div>
+
+              <div className="table-card">
+                <h3>Outstanding Creditors</h3>
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Customer</th><th>Phone</th><th>Product</th><th>Receipt</th>
+                        <th>Total price</th><th>Paid</th><th>Amount owed</th><th>Due date</th><th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sales
+                        .filter(s => s.saleType === "Credit Sale" && Number(s.balance || 0) > 0)
+                        .map(s => {
+                          const customer = customers.find(c => c.id === s.customerId);
+                          return (
+                            <tr key={s.id}>
+                              <td>{s.customerName || customer?.name || "Customer"}</td>
+                              <td>{s.customerPhone || customer?.phone || "—"}</td>
+                              <td>{s.productName} × {s.quantity}</td>
+                              <td>{s.receiptNumber}</td>
+                              <td>{money(s.total)}</td>
+                              <td>{money(s.amountPaid)}</td>
+                              <td className="debt">{money(s.balance)}</td>
+                              <td>{s.dueDate || "—"}</td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="primary-button"
+                                  onClick={() => {
+                                    setPaymentForm({
+                                      saleId: String(s.id),
+                                      amount: "",
+                                      paymentMethod: "Cash",
+                                      financialAccountId: ""
+                                    });
+                                    navigate("Payments");
+                                  }}
+                                >
+                                  <CreditCard size={16} /> Receive payment
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                  {sales.filter(s => s.saleType === "Credit Sale" && Number(s.balance || 0) > 0).length === 0 && (
+                    <p>No customers currently owe money on credit sales.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="table-card">
+                <h3>Credit Sale History</h3>
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr><th>Customer</th><th>Product</th><th>Receipt</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th></tr>
+                    </thead>
+                    <tbody>
+                      {sales.filter(s => s.saleType === "Credit Sale").map(s => (
+                        <tr key={s.id}>
+                          <td>{s.customerName}</td>
+                          <td>{s.productName} × {s.quantity}</td>
+                          <td>{s.receiptNumber}</td>
+                          <td>{money(s.total)}</td>
+                          <td>{money(s.amountPaid)}</td>
+                          <td className={Number(s.balance || 0) > 0 ? "debt" : "profit"}>{money(s.balance)}</td>
+                          <td>{s.paymentStatus || (Number(s.balance || 0) <= 0 ? "Paid" : "Partially Paid")}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {sales.filter(s => s.saleType === "Credit Sale").length === 0 && <p>No credit sales recorded yet.</p>}
+                </div>
+              </div>
+            </>
+          )}
+
           {/* PAYMENTS */}
           {activePage === "Payments" && (
             <>
@@ -1962,6 +2192,22 @@ function App() {
                     </select>
                   </label>
                 </div>
+
+                {paymentForm.paymentMethod === "Cash" &&
+                  !financialAccounts.some(account => account.type === "Cash") && (
+                    <div style={{ marginTop: "14px" }}>
+                      <p className="muted">
+                        No Cash account exists yet. Create one to receive this installment.
+                      </p>
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={createCashAccountFromPayments}
+                      >
+                        <Plus size={18} /> Create Cash in Hand Account
+                      </button>
+                    </div>
+                  )}
 
                 <div className="form-actions">
                   <button className="primary-button"><CreditCard size={18} /> Save Payment</button>
@@ -3332,21 +3578,3 @@ function App() {
 }
 
 export default App;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
