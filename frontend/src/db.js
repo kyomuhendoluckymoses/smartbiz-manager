@@ -1,6 +1,21 @@
+
 import Dexie from "dexie";
 
 export const db = new Dexie("SmartBizDatabase");
+
+const syncTables = [
+  "products",
+  "customers",
+  "sales",
+  "expenses",
+  "payments",
+  "bankTransactions",
+  "stockPurchases",
+  "stockBatches",
+  "financialAccounts",
+  "financialTransactions",
+  "stockTransfers"
+];
 
 // DATABASE VERSION 1
 db.version(1).stores({
@@ -20,7 +35,7 @@ db.version(2).stores({
   payments: "++id, customerId, saleId, receiptNumber, createdAt, paymentMethod"
 });
 
-// DATABASE VERSION 3 - BANKING
+// DATABASE VERSION 3
 db.version(3).stores({
   products: "++id, name, category, sku, createdAt",
   customers: "++id, name, phone",
@@ -30,7 +45,7 @@ db.version(3).stores({
   bankTransactions: "++id, transactionType, accountName, amount, transactionDate, createdAt"
 });
 
-// DATABASE VERSION 4 - STOCK PURCHASES
+// DATABASE VERSION 4
 db.version(4).stores({
   products: "++id, name, category, sku, createdAt",
   customers: "++id, name, phone",
@@ -41,7 +56,7 @@ db.version(4).stores({
   stockPurchases: "++id, productId, supplierName, purchaseDate, createdAt"
 });
 
-// DATABASE VERSION 5 - FIFO STOCK BATCHES
+// DATABASE VERSION 5
 db.version(5).stores({
   products: "++id, name, category, sku, createdAt",
   customers: "++id, name, phone",
@@ -53,7 +68,7 @@ db.version(5).stores({
   stockBatches: "++id, productId, purchaseId, purchaseDate, createdAt"
 });
 
-// DATABASE VERSION 6 - FINANCIAL MANAGEMENT
+// DATABASE VERSION 6
 db.version(6).stores({
   products: "++id, name, category, sku, createdAt",
   customers: "++id, name, phone",
@@ -67,8 +82,7 @@ db.version(6).stores({
   financialTransactions: "++id, accountId, transactionType, category, referenceId, transactionDate, createdAt"
 });
 
-
-// DATABASE VERSION 7 - TWO SHOP STOCK TRANSFERS
+// DATABASE VERSION 7
 db.version(7).stores({
   products: "++id, name, category, sku, createdAt",
   customers: "++id, name, phone",
@@ -87,8 +101,7 @@ db.version(7).stores({
   });
 });
 
-
- // DATABASE VERSION 8 - STABLE CLOUD IDENTITIES
+// DATABASE VERSION 8
 db.version(8).stores({
   products: "++id, syncId, name, category, sku, createdAt",
   customers: "++id, syncId, name, phone",
@@ -102,34 +115,103 @@ db.version(8).stores({
   financialTransactions: "++id, syncId, accountId, transactionType, category, referenceId, transactionDate, createdAt",
   stockTransfers: "++id, syncId, productId, fromLocation, toLocation, transferDate, createdAt"
 }).upgrade(async tx => {
-  const tables = [
-    "products", "customers", "sales", "expenses", "payments",
-    "bankTransactions", "stockPurchases", "stockBatches",
-    "financialAccounts", "financialTransactions", "stockTransfers"
-  ];
-
-  for (const tableName of tables) {
+  for (const tableName of syncTables) {
     await tx.table(tableName).toCollection().modify(record => {
-      if (!record.syncId) record.syncId = crypto.randomUUID();
+      if (!record.syncId) {
+        record.syncId = crypto.randomUUID();
+      }
     });
   }
 });
 
+// DATABASE VERSION 9 - TWO-WAY SYNC FOUNDATION
+db.version(9).stores({
+  products: "++id, syncId, name, category, sku, createdAt, updatedAt",
+  customers: "++id, syncId, name, phone, createdAt, updatedAt",
+  sales: "++id, syncId, receiptNumber, customerId, createdAt, updatedAt, saleType, fulfillmentStatus, paymentStatus",
+  expenses: "++id, syncId, category, amount, createdAt, updatedAt",
+  payments: "++id, syncId, customerId, saleId, receiptNumber, createdAt, updatedAt, paymentMethod",
+  bankTransactions: "++id, syncId, transactionType, accountName, amount, transactionDate, createdAt, updatedAt",
+  stockPurchases: "++id, syncId, productId, supplierName, purchaseDate, createdAt, updatedAt",
+  stockBatches: "++id, syncId, productId, purchaseId, purchaseDate, createdAt, updatedAt, location",
+  financialAccounts: "++id, syncId, name, type, provider, createdAt, updatedAt",
+  financialTransactions: "++id, syncId, accountId, transactionType, category, referenceId, transactionDate, createdAt, updatedAt",
+  stockTransfers: "++id, syncId, productId, fromLocation, toLocation, transferDate, createdAt, updatedAt",
 
-// AUTOMATIC STABLE IDS FOR NEW RECORDS
-const syncTables = [
-  "products", "customers", "sales", "expenses", "payments",
-  "bankTransactions", "stockPurchases", "stockBatches",
-  "financialAccounts", "financialTransactions", "stockTransfers"
-];
+  syncDeletions: "++id, syncId, entityType, deletedAt",
+  syncMeta: "&key"
+}).upgrade(async tx => {
+  const now = new Date().toISOString();
 
+  for (const tableName of syncTables) {
+    await tx.table(tableName).toCollection().modify(record => {
+      if (!record.syncId) {
+        record.syncId = crypto.randomUUID();
+      }
+
+      if (!record.createdAt) {
+        record.createdAt = now;
+      }
+
+      if (!record.updatedAt) {
+        record.updatedAt = record.createdAt || now;
+      }
+    });
+  }
+});
+
+// AUTOMATIC UUID AND CHANGE TIMESTAMPS
 for (const tableName of syncTables) {
-  db.table(tableName).hook("creating", function (primaryKey, record) {
+  const table = db.table(tableName);
+
+  table.hook("creating", function (primaryKey, record) {
+    const now = new Date().toISOString();
+
     if (!record.syncId) {
       record.syncId = crypto.randomUUID();
     }
+
+    if (!record.createdAt) {
+      record.createdAt = now;
+    }
+
+    record.updatedAt = now;
+  });
+
+  table.hook("updating", function (modifications) {
+    return {
+      ...modifications,
+      updatedAt: new Date().toISOString()
+    };
   });
 }
 
-export default db;
+// RECORD DELETION FOR LATER CLOUD SYNCHRONIZATION
+// Use this helper instead of directly calling table.delete().
+export async function deleteWithSync(tableName, id) {
+  if (!syncTables.includes(tableName)) {
+    throw new Error("Invalid synchronization table: " + tableName);
+  }
 
+  await db.transaction(
+    "rw",
+    db.table(tableName),
+    db.syncDeletions,
+    async () => {
+      const record = await db.table(tableName).get(id);
+
+      if (!record) return;
+
+      await db.syncDeletions.add({
+        syncId: record.syncId,
+        entityType: tableName,
+        deletedAt: new Date().toISOString()
+      });
+
+      await db.table(tableName).delete(id);
+    }
+  );
+}
+
+export { syncTables };
+export default db;

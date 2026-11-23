@@ -969,3 +969,109 @@ td small {
     grid-template-columns: 1fr;
   }
 }
+
+/* SMARTBIZ RESPONSIVE LAYOUT CORRECTION */
+@media screen and (max-width: 1000px) {
+
+  html, body, #root {
+    width: 100%;
+    min-width: 320px;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .app {
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    padding-bottom: 90px !important;
+  }
+
+  .sidebar {
+    display: none !important;
+  }
+
+  .main {
+    display: block !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+  }
+
+  .topbar {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 14px 16px;
+  }
+
+  .content {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box;
+    padding: 16px !important;
+    overflow-x: hidden !important;
+  }
+
+  .cards {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 12px !important;
+    width: 100%;
+  }
+
+  .card {
+    min-width: 0;
+    box-sizing: border-box;
+    overflow: hidden;
+    padding: 14px 10px;
+  }
+
+  .card h2 {
+    font-size: clamp(13px, 3.5vw, 19px) !important;
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+  }
+
+  .mobile-bottom-nav {
+    display: flex !important;
+    position: fixed !important;
+    z-index: 1000;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    min-height: 68px;
+    padding: 7px 4px calc(7px + env(safe-area-inset-bottom));
+    background: white;
+    border-top: 1px solid #e5e7eb;
+    justify-content: space-around;
+    align-items: center;
+  }
+
+  .mobile-more-menu {
+    z-index: 1001;
+  }
+
+  .table-scroll {
+    max-width: 100%;
+    overflow-x: auto !important;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  .card {
+    padding: 12px 8px;
+  }
+
+  .card h2 {
+    font-size: 13px !important;
+  }
+}
+

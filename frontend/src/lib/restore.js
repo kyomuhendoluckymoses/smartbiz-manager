@@ -1,7 +1,7 @@
 import { db } from "../db";
-import { supabase } from "./supabase";
+import { getAuthorizedBusiness } from "./businessAccess";
 
-const BUSINESS_ID = "a7c8c68a-58fd-4277-a291-aca3b6320e27";
+
 
 const TABLES = [
   "products",
@@ -52,14 +52,7 @@ function resolveLink(maps, tableName, syncId) {
 }
 
 export async function restoreCloudToLocal() {
-  const { data: { session }, error: sessionError } =
-    await supabase.auth.getSession();
-
-  if (sessionError) throw sessionError;
-
-  if (!session) {
-    throw new Error("Please sign in with the SmartBiz owner account before restoring.");
-  }
+  const business = await getAuthorizedBusiness();
 
   // Never mix a cloud restore with existing local business records.
   for (const tableName of TABLES) {
@@ -85,7 +78,7 @@ export async function restoreCloudToLocal() {
       const { data, error } = await supabase
         .from("business_records")
         .select("record_id, record_data")
-        .eq("business_id", BUSINESS_ID)
+        .eq("business_id", business.id)
         .eq("entity_type", tableName)
         .order("record_id")
         .range(offset, offset + pageSize - 1);

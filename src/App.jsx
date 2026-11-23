@@ -105,6 +105,7 @@ function App() {
     { name: "Banking", icon: Landmark },
     { name: "Financial Management", icon: Wallet },
     { name: "Reports", icon: ChartNoAxesCombined },
+    { name: "Cloud Sync", icon: RefreshCw },
     { name: "Settings", icon: Settings }
   ];
 
@@ -2690,7 +2691,15 @@ function App() {
             </>
           )}
 
-          {activePage === "Settings" && (
+          {activePage === "Cloud Sync" && (
+    <div className="welcome-card">
+      <h2>Cloud Sync</h2>
+      <p>Manage secure synchronization of your business records across devices.</p>
+      <p className="muted">Cloud synchronization is being configured. Your existing local records remain unchanged.</p>
+    </div>
+  )}
+
+  {activePage === "Settings" && (
             <div className="welcome-card">
               <h2>Settings</h2>
               <p>Business settings will be expanded in a later development step.</p>

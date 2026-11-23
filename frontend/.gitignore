@@ -54,3 +54,8 @@ public/.icon-192.png
 
 src/db-before-*
 .vercel
+.env*
+
+# Private cloud backups
+cloud-backup.json
+

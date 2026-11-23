@@ -65,3 +65,13 @@ src/App-css-before-*.css
 src/db-before-*.backup
 src/db-before-*
 public/.icon-192.png
+.vercel
+
+# Supabase local project metadata
+supabase/.temp/
+frontend/supabase/.temp/
+
+# Development backups and temporary files
+*.before-*
+*.backup-*
+*.tmp
