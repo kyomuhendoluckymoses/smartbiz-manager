@@ -6,7 +6,8 @@ import {
 } from "lucide-react";
 
 import { db, deleteWithSync } from "./db";
-import { syncToCloud } from "./sync";
+import { syncLocalToCloud } from "./lib/sync";
+import { restoreCloudToLocal } from "./lib/restore";
 import { supabase, supabaseUrl, supabaseKey } from "./lib/supabase";
 import "./App.css";
 
@@ -41,6 +42,26 @@ const emptyPurchase = {
 };
 
 function App() {
+  const [session, setSession] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session || null);
+      setAuthChecked(true);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
+      setSession(s || null);
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (session) loadData();
+  }, [session]);
   const [activePage, setActivePage] = useState("Dashboard");
   const [hasEntered, setHasEntered] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -131,7 +152,7 @@ function App() {
     openingBalance: "0"
   });
   const [purchaseForm, setPurchaseForm] = useState(emptyPurchase);
-  const [purchaseItems, setPurchaseItems] = useState([{ productId: "", productName: "", quantity: "", buyingPrice: "",  }]);
+  const [purchaseItems, setPurchaseItems] = useState([{ productId: "", productName: "", quantity: "", buyingPrice: "", sellingPrice: "" }]);
 
   const [paymentForm, setPaymentForm] = useState({
     saleId: "", amount: "", paymentMethod: "Cash", financialAccountId: ""
@@ -227,11 +248,39 @@ function App() {
     );
   }
 
-  // LOAD DATA
+  // LOAD DATA - RESTORE CLOUD RECORDS ON A NEW DEVICE
   async function loadData() {
     setLoading(true);
+    setError("");
+
+    const tableNames = [
+      "products", "customers", "sales", "expenses", "payments",
+      "bankTransactions", "stockPurchases", "stockBatches",
+      "financialAccounts", "financialTransactions", "stockTransfers"
+    ];
 
     try {
+      if (navigator.onLine) {
+        // A new phone has no local records. Restore the owner's cloud data first.
+        const counts = await Promise.all(
+          tableNames.map(name => db.table(name).count())
+        );
+        const hasLocalRecords = counts.some(count => count > 0);
+
+        if (!hasLocalRecords) {
+          console.log("No local business records found. Restoring from cloud...");
+          const result = await restoreCloudToLocal();
+          console.log("Cloud restoration completed:", result);
+        } else {
+          // Existing device: retain its local database and sync it to cloud.
+          await syncLocalToCloud();
+          console.log("Existing local records synchronized to cloud.");
+        }
+      } else {
+        console.warn("Device is offline. Loading locally saved records.");
+      }
+
+      // Run stock migration only after cloud records have been restored.
       await migrateExistingStock();
 
       const [p, s, c, pay, ex, bank, purchases, batches, accounts, transactions, transfers] =
@@ -261,16 +310,23 @@ function App() {
       setStockTransfers(transfers);
       setFinancialAccounts(accounts);
       setFinancialTransactions(transactions);
+
+      console.log("SmartBiz dashboard records loaded:", {
+        products: p.length,
+        sales: s.length,
+        customers: c.length,
+        expenses: ex.length,
+        payments: pay.length,
+        bankTransactions: bank.length,
+        stockPurchases: purchases.length
+      });
     } catch (err) {
-      setError("Could not load records: " + err.message);
+      console.error("SmartBiz loading error:", err);
+      setError("Could not load business records: " + (err?.message || err));
     } finally {
       setLoading(false);
     }
   }
-
-  useEffect(() => {
-    loadData();
-  }, []);
 
   // FINANCIAL ACCOUNT SETUP
   async function addFinancialAccount(e) {
@@ -451,7 +507,6 @@ function App() {
 
       setShowForm(false);
       await loadData();
-      syncToCloud();
     } catch (err) {
       setError("Could not save product: " + err.message);
     }
@@ -812,7 +867,6 @@ function App() {
       setSaleFormOpen(false);
       setSuccess("Sale saved using FIFO costing. Receipt: " + receiptNumber);
       await loadData();
-      syncToCloud();
     } catch (err) {
       setError("Sale failed: " + err.message);
     }
@@ -954,7 +1008,6 @@ function App() {
       setExpenseForm(emptyExpense);
       setSuccess("Expense recorded.");
       await loadData();
-      syncToCloud();
     } catch (err) {
       setError(err.message);
     }
@@ -1098,7 +1151,7 @@ function App() {
 
   function addPurchaseItem() {
     setPurchaseItems(items => [...items, {
-      productId: "", productName: "", quantity: "", buyingPrice: "", 
+      productId: "", productName: "", quantity: "", buyingPrice: "", sellingPrice: ""
     }]);
   }
 
@@ -1128,6 +1181,8 @@ function App() {
         return setError("Enter a valid whole-number quantity for item " + (i + 1) + ".");
       if (!Number.isFinite(Number(item.buyingPrice)) || Number(item.buyingPrice) <= 0)
         return setError("Enter a valid buying price for item " + (i + 1) + ".");
+      if (!Number.isFinite(Number(item.sellingPrice)) || Number(item.sellingPrice) <= 0)
+        return setError("Enter a valid selling price for item " + (i + 1) + ".");
       
     }
 
@@ -1173,7 +1228,7 @@ function App() {
                 category: "",
                 sku: "",
                 buyingPrice,
-                sellingPrice,
+                sellingPrice: Number(item.sellingPrice),
                 quantity: 0,
                 createdAt: now
               });
@@ -1236,7 +1291,7 @@ function App() {
 
       setPurchaseForm(emptyPurchase);
       setPurchaseItems([{
-        productId: "", productName: "", quantity: "", buyingPrice: "", 
+        productId: "", productName: "", quantity: "", buyingPrice: "", sellingPrice: ""
       }]);
       setSuccess("All stock items saved successfully. Each item has its own FIFO batch and purchase record.");
       await loadData();
@@ -1572,6 +1627,10 @@ function App() {
 
     return value;
   }
+  if (!authChecked) {
+    return <div className="welcome-screen"><p>Checking sign-in…</p></div>;
+  }
+
   if (!hasEntered) {
     return (
       <div className="welcome-screen">
@@ -1599,6 +1658,43 @@ function App() {
             Get Started →
           </button>
           <p className="welcome-footer">Your business. Your control.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="welcome-screen">
+        <div className="welcome-content">
+          <h1>SmartBiz Manager</h1>
+          <h2>Sign in to your business</h2>
+          <p className="welcome-description">
+            Use the same email and password as your computer.
+          </p>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setAuthBusy(true);
+              setError("");
+              const { error } = await supabase.auth.signInWithPassword({
+                email: authEmail.trim(),
+                password: authPassword,
+              });
+              setAuthBusy(false);
+              if (error) setError("Sign-in failed: " + error.message);
+            }}
+            style={{ display: "grid", gap: "12px", maxWidth: 360, margin: "0 auto" }}
+          >
+            <input type="email" placeholder="Email" required
+              value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
+            <input type="password" placeholder="Password" required
+              value={authPassword} onChange={e => setAuthPassword(e.target.value)} />
+            <button className="welcome-start-button" disabled={authBusy}>
+              {authBusy ? "Signing in…" : "Sign In →"}
+            </button>
+            {error && <p className="error-message">{error}</p>}
+          </form>
         </div>
       </div>
     );
@@ -2657,7 +2753,7 @@ function App() {
                 </div>
 
                 <div className="form-actions">
-                  <button type="button" className="secondary-button" onClick={() => { setPurchaseForm(emptyPurchase); setPurchaseItems([{ productId: "", productName: "", quantity: "", buyingPrice: "",  }]); }}>Clear Form</button>
+                  <button type="button" className="secondary-button" onClick={() => { setPurchaseForm(emptyPurchase); setPurchaseItems([{ productId: "", productName: "", quantity: "", buyingPrice: "", sellingPrice: "" }]); }}>Clear Form</button>
                   <button className="primary-button"><Plus size={18} /> Save All Items</button>
                 </div>
               </form>
@@ -3578,3 +3674,4 @@ function App() {
 }
 
 export default App;
+
