@@ -482,8 +482,8 @@ function App() {
     const selling = parseFloat(form.sellingPrice);
     const quantity = parseInt(form.quantity, 10);
 
-    if (!form.name.trim() || isNaN(buying) || buying <= 0 || isNaN(selling) || selling <= 0 || isNaN(quantity) || quantity < 0) {
-      setError("Enter a product name, valid buying price, selling price and stock quantity.");
+    if (!form.name.trim() || isNaN(buying) || buying <= 0 || isNaN(quantity) || quantity < 0) {
+      setError("Enter a product name, valid buying price and stock quantity.");
       return;
     }
 
@@ -494,7 +494,7 @@ function App() {
           category: form.category.trim(),
           sku: form.sku.trim(),
           buyingPrice: buying,
-          sellingPrice: selling
+          // Existing selling price is managed separately; preserve it.
         });
 
         setEditingProductId(null);
@@ -508,7 +508,7 @@ function App() {
             category: form.category.trim(),
             sku: form.sku.trim(),
             buyingPrice: buying,
-            sellingPrice: selling,
+            // Existing selling price is managed separately; preserve it.,
             quantity,
             createdAt: now
           });
@@ -766,9 +766,9 @@ function App() {
         )
       : null;
 
-    if (amountPaid > 0 && !receivingAccount)
+  if (amountPaid > 0 && saleForm.paymentMethod !== "Cash" && !receivingAccount)
       return setError("Choose the account receiving the customer's payment.");
-    if (receivingAccount && receivingAccount.type !== saleForm.paymentMethod)
+    if (receivingAccount && !(saleForm.paymentMethod === "Cash" ? receivingAccount.type === "Cash" : saleForm.paymentMethod === "MTN Mobile Money" ? receivingAccount.type === "Mobile Money" && String(receivingAccount.provider || "").toLowerCase().includes("mtn") : saleForm.paymentMethod === "Airtel Money" ? receivingAccount.type === "Mobile Money" && String(receivingAccount.provider || "").toLowerCase().includes("airtel") : false))
       return setError("The selected account does not match the payment method.");
 
     try {
@@ -938,7 +938,7 @@ function App() {
     if (!receivingAccount)
       return setError("Choose the account receiving this payment.");
 
-    if (receivingAccount.type !== paymentForm.paymentMethod)
+    if (!(paymentForm.paymentMethod === "Cash" ? receivingAccount.type === "Cash" : paymentForm.paymentMethod === "MTN Mobile Money" ? receivingAccount.type === "Mobile Money" && String(receivingAccount.provider || "").toLowerCase().includes("mtn") : paymentForm.paymentMethod === "Airtel Money" ? receivingAccount.type === "Mobile Money" && String(receivingAccount.provider || "").toLowerCase().includes("airtel") : false))
       return setError("The selected account does not match the payment method.");
 
     try {
@@ -1228,7 +1228,7 @@ function App() {
 
     if (purchaseForm.paymentMethod !== "Credit" && purchaseForm.paymentMethod !== "Cash" && !payingAccount)
       return setError("Choose the account paying for this stock.");
-    if (payingAccount && payingAccount.type !== purchaseForm.paymentMethod)
+    if (payingAccount && !(purchaseForm.paymentMethod === "Cash" ? payingAccount.type === "Cash" : purchaseForm.paymentMethod === "MTN Mobile Money" ? payingAccount.type === "Mobile Money" && String(payingAccount.provider || "").toLowerCase().includes("mtn") : purchaseForm.paymentMethod === "Airtel Money" ? payingAccount.type === "Mobile Money" && String(payingAccount.provider || "").toLowerCase().includes("airtel") : false))
       return setError("The selected account does not match the payment method.");
 
     try {
@@ -1671,7 +1671,7 @@ function App() {
     return (
       <div className="welcome-screen">
         <div className="welcome-content">
-          <div className="welcome-logo"><span>SB</span></div>
+          <div className="welcome-logo"><img src="/favicon.svg" alt="SmartBiz logo" /></div>
           <p className="welcome-label">YOUR BUSINESS PARTNER</p>
           <h1>SmartBiz Manager</h1>
           <h2>Manage your business smarter.</h2>
@@ -1740,6 +1740,7 @@ function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
+          <img src="/favicon.svg" alt="SmartBiz logo" />
           <h2>SmartBiz</h2>
           <p className="subtitle">Business Manager</p>
         </div>
@@ -1895,6 +1896,7 @@ function App() {
                     <label>Category<input name="category" value={form.category} onChange={updateField} /></label>
                     <label>Product code<input name="sku" value={form.sku} onChange={updateField} /></label>
                     <label>Buying price (UGX) *<input type="number" min="1" name="buyingPrice" value={form.buyingPrice} onChange={updateField} required /></label>
+
                     <label>Quantity *<input type="number" min="0" step="1" name="quantity" value={form.quantity} onChange={updateField} required /></label>
                   </div>
 
@@ -2055,21 +2057,18 @@ function App() {
                           })}
                           required
                         >
-                          <option>Cash</option>
-                          <option>Bank</option>
-                          <option>Mobile Money</option>
-                          <option>Other</option>
+                          <option>Cash</option><option>MTN Mobile Money</option><option>Airtel Money</option>
                         </select>
                       </label>
                       <label>Receive payment into account *
                         <select
                           value={saleForm.financialAccountId}
                           onChange={e => setSaleForm({ ...saleForm, financialAccountId: e.target.value })}
-                          required
+                      required={saleForm.paymentMethod !== "Cash"}
                         >
                           <option value="">Choose receiving account</option>
                           {financialAccounts
-                            .filter(account => account.type === saleForm.paymentMethod)
+                            .filter(account => (saleForm.paymentMethod === "Cash" ? account.type === "Cash" : saleForm.paymentMethod === "MTN Mobile Money" ? account.type === "Mobile Money" && String(account.provider || "").toLowerCase().includes("mtn") : saleForm.paymentMethod === "Airtel Money" ? account.type === "Mobile Money" && String(account.provider || "").toLowerCase().includes("airtel") : false))
                             .map(account => (
                               <option key={account.id} value={account.id}>{account.name}</option>
                             ))}
@@ -2303,7 +2302,7 @@ function App() {
 
                   <label>Payment method
                     <select value={paymentForm.paymentMethod} onChange={e => setPaymentForm({ ...paymentForm, paymentMethod: e.target.value, financialAccountId: "" })}>
-                      <option>Cash</option><option>Bank</option><option>Mobile Money</option><option>Other</option>
+                      <option>Cash</option><option>MTN Mobile Money</option><option>Airtel Money</option>
                     </select>
                   </label>
 
@@ -2315,7 +2314,7 @@ function App() {
                     >
                       <option value="">Choose account</option>
                       {financialAccounts
-                        .filter(account => account.type === paymentForm.paymentMethod)
+                        .filter(account => (paymentForm.paymentMethod === "Cash" ? account.type === "Cash" : paymentForm.paymentMethod === "MTN Mobile Money" ? account.type === "Mobile Money" && String(account.provider || "").toLowerCase().includes("mtn") : paymentForm.paymentMethod === "Airtel Money" ? account.type === "Mobile Money" && String(account.provider || "").toLowerCase().includes("airtel") : false))
                         .map(account => (
                           <option key={account.id} value={account.id}>
                             {account.name}
@@ -2454,7 +2453,7 @@ function App() {
 
                   <label>Payment method
                     <select value={expenseForm.paymentMethod} onChange={e => setExpenseForm({ ...expenseForm, paymentMethod: e.target.value, financialAccountId: "" })}>
-                      <option>Cash</option><option>Bank</option><option>Mobile Money</option><option>Other</option>
+                      <option>Cash</option><option>MTN Mobile Money</option><option>Airtel Money</option>
                     </select>
                   </label>
 
@@ -2466,7 +2465,7 @@ function App() {
                     >
                       <option value="">Choose account</option>
                       {financialAccounts
-                        .filter(account => account.type === expenseForm.paymentMethod)
+                        .filter(account => (expenseForm.paymentMethod === "Cash" ? account.type === "Cash" : expenseForm.paymentMethod === "MTN Mobile Money" ? account.type === "Mobile Money" && String(account.provider || "").toLowerCase().includes("mtn") : expenseForm.paymentMethod === "Airtel Money" ? account.type === "Mobile Money" && String(account.provider || "").toLowerCase().includes("airtel") : false))
                         .map(account => (
                           <option key={account.id} value={account.id}>
                             {account.name}
@@ -2713,14 +2712,14 @@ function App() {
                   </label>
                   <label>Payment method
                     <select value={purchaseForm.paymentMethod} onChange={e => setPurchaseForm({ ...purchaseForm, paymentMethod: e.target.value, financialAccountId: "" })}>
-                      <option>Cash</option><option>Bank</option><option>Mobile Money</option><option>Credit</option><option>Other</option>
+                      <option>Cash</option><option>MTN Mobile Money</option><option>Airtel Money</option><option>Credit</option>
                     </select>
                   </label>
                   {purchaseForm.paymentMethod !== "Credit" && purchaseForm.paymentMethod !== "Cash" && (
                     <label>Paid from account *
                       <select value={purchaseForm.financialAccountId} onChange={e => setPurchaseForm({ ...purchaseForm, financialAccountId: e.target.value })} required>
                         <option value="">Choose account</option>
-                        {financialAccounts.filter(account => account.type === purchaseForm.paymentMethod).map(account => (
+                        {financialAccounts.filter(account => (purchaseForm.paymentMethod === "Cash" ? account.type === "Cash" : purchaseForm.paymentMethod === "MTN Mobile Money" ? account.type === "Mobile Money" && String(account.provider || "").toLowerCase().includes("mtn") : purchaseForm.paymentMethod === "Airtel Money" ? account.type === "Mobile Money" && String(account.provider || "").toLowerCase().includes("airtel") : false)).map(account => (
                           <option key={account.id} value={account.id}>{account.name}</option>
                         ))}
                       </select>
@@ -3711,5 +3710,3 @@ function App() {
 }
 
 export default App;
-
-

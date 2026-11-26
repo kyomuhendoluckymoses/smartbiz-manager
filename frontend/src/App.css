@@ -1173,3 +1173,18 @@ td small {
     max-width: 100% !important;
   }
 }
+
+/* SmartBiz logo inside the application */
+.welcome-logo img {
+  width: 52px;
+  height: 52px;
+  object-fit: contain;
+}
+
+.sidebar .brand img {
+  display: block;
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  margin: 0 auto 12px;
+}
