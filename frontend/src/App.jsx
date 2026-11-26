@@ -8,6 +8,7 @@ import {
 import { db, deleteWithSync } from "./db";
 import { syncLocalToCloud } from "./lib/sync";
 import { supabase, supabaseUrl, supabaseKey } from "./lib/supabase";
+import ProtectedCleanup from "./ProtectedCleanup";
 import "./App.css";
 
 const money = (amount) =>
@@ -3634,9 +3635,10 @@ function App() {
           )}
 
           {activePage === "Settings" && (
-            <div className="welcome-card">
+            <div>
               <h2>Settings</h2>
               <p>Application settings and configurations.</p>
+              <ProtectedCleanup />
             </div>
           )}
 
@@ -3709,4 +3711,5 @@ function App() {
 }
 
 export default App;
+
 
