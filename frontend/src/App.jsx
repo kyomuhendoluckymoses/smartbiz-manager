@@ -147,6 +147,7 @@ function App() {
 
   const [editingProductId, setEditingProductId] = useState(null);
   const [pendingDeleteId, setPendingDeleteId] = useState(null);
+  const [pendingDeleteExpenseId, setPendingDeleteExpenseId] = useState(null);
   const [deleteEmail, setDeleteEmail] = useState("");
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -1049,11 +1050,71 @@ function App() {
     }
   }
 
-  async function deleteExpense(id) {
-    if (!window.confirm("Delete this expense?")) return;
-    await deleteWithSync("expenses", id);
-    setSuccess("Expense deleted.");
-    await loadData();
+  function requestDeleteExpense(id) {
+    if (!navigator.onLine || cloudStatus !== "online") {
+      setError("Connect to the internet before deleting an expense.");
+      return;
+    }
+
+    setPendingDeleteExpenseId(id);
+    setDeleteEmail("");
+    setDeletePassword("");
+    setError("");
+    setSuccess("");
+  }
+
+  async function confirmDeleteExpense(event) {
+    event.preventDefault();
+
+    if (pendingDeleteExpenseId === null || deleteBusy) return;
+
+    if (!navigator.onLine || cloudStatus !== "online") {
+      setError("Internet connection is required for owner verification.");
+      return;
+    }
+
+    setDeleteBusy(true);
+    setError("");
+
+    try {
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email: deleteEmail.trim(),
+          password: deletePassword
+        });
+
+      if (authError) {
+        throw new Error("Owner email or password is incorrect.");
+      }
+
+      if (
+        authData.user?.email?.toLowerCase() !== "friendnew@gmail.com"
+      ) {
+        await supabase.auth.signOut();
+        throw new Error("Only the registered business owner can delete expenses.");
+      }
+
+      await deleteWithSync("expenses", pendingDeleteExpenseId);
+
+      setPendingDeleteExpenseId(null);
+      setDeleteEmail("");
+      setDeletePassword("");
+      setSuccess("Expense deleted successfully.");
+      await loadData();
+
+    } catch (err) {
+      setError(err.message || "Could not delete expense.");
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
+  function cancelDeleteExpense() {
+    if (deleteBusy) return;
+
+    setPendingDeleteExpenseId(null);
+    setDeleteEmail("");
+    setDeletePassword("");
   }
 
   // BANKING
@@ -2457,22 +2518,35 @@ function App() {
                     </select>
                   </label>
 
-                  <label>Paid from account *
-                    <select
-                      value={expenseForm.financialAccountId}
-                      onChange={e => setExpenseForm({ ...expenseForm, financialAccountId: e.target.value })}
-                      required
-                    >
-                      <option value="">Choose account</option>
-                      {financialAccounts
-                        .filter(account => (expenseForm.paymentMethod === "Cash" ? account.type === "Cash" : expenseForm.paymentMethod === "MTN Mobile Money" ? account.type === "Mobile Money" && String(account.provider || "").toLowerCase().includes("mtn") : expenseForm.paymentMethod === "Airtel Money" ? account.type === "Mobile Money" && String(account.provider || "").toLowerCase().includes("airtel") : false))
-                        .map(account => (
-                          <option key={account.id} value={account.id}>
-                            {account.name}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
+                  {expenseForm.paymentMethod !== "Cash" && (
+  <label>Paid from account *
+    <select
+      value={expenseForm.financialAccountId}
+      onChange={e => setExpenseForm({
+        ...expenseForm,
+        financialAccountId: e.target.value
+      })}
+      required
+    >
+      <option value="">Choose account</option>
+      {financialAccounts
+        .filter(account => (
+          expenseForm.paymentMethod === "MTN Mobile Money"
+            ? account.type === "Mobile Money" &&
+              String(account.provider || "").toLowerCase().includes("mtn")
+            : expenseForm.paymentMethod === "Airtel Money"
+              ? account.type === "Mobile Money" &&
+                String(account.provider || "").toLowerCase().includes("airtel")
+              : false
+        ))
+        .map(account => (
+          <option key={account.id} value={account.id}>
+            {account.name}
+          </option>
+        ))}
+    </select>
+  </label>
+)}
 
                   <label>Expense date *
                     <input type="date" value={expenseForm.date} onChange={e => setExpenseForm({ ...expenseForm, date: e.target.value })} required />
@@ -2503,7 +2577,7 @@ function App() {
                           <td>{e.category}</td><td>{e.description}</td>
                           <td>{e.paymentMethod}</td>
                           <td className="debt">{money(e.amount)}</td>
-                          <td><button className="delete-button" onClick={() => deleteExpense(e.id)}><Trash2 size={17} /></button></td>
+                          <td><button className="delete-button" onClick={() => requestDeleteExpense(e.id)}><Trash2 size={17} /></button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -3704,9 +3778,93 @@ function App() {
         </div>
       )}
 
+      {/* EXPENSE DELETE PASSWORD CONFIRMATION */}
+      {pendingDeleteExpenseId !== null && (
+        <div className="modal-overlay" style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: "rgba(0,0,0,0.5)", display: "flex",
+          alignItems: "center", justifyContent: "center", zIndex: 1100
+        }}>
+          <div className="modal-content" style={{
+            background: "#fff", padding: "24px", borderRadius: "12px",
+            width: "100%", maxWidth: "400px",
+            boxShadow: "0 10px 25px rgba(0,0,0,0.1)"
+          }}>
+            <h3 style={{ marginTop: 0 }}>Verify Owner to Delete Expense</h3>
+            <p style={{ fontSize: "14px", color: "#555", marginBottom: "20px" }}>
+              Enter the registered business owner's email and password to confirm this deletion.
+            </p>
+
+            <form onSubmit={confirmDeleteExpense}>
+              <label style={{
+                display: "block", marginBottom: "12px",
+                fontSize: "14px", fontWeight: "bold"
+              }}>
+                Owner Email
+                <input
+                  type="email"
+                  value={deleteEmail}
+                  onChange={e => setDeleteEmail(e.target.value)}
+                  required
+                  disabled={deleteBusy}
+                  style={{
+                    width: "100%", padding: "10px", marginTop: "4px",
+                    borderRadius: "6px", border: "1px solid #ccc"
+                  }}
+                />
+              </label>
+
+              <label style={{
+                display: "block", marginBottom: "20px",
+                fontSize: "14px", fontWeight: "bold"
+              }}>
+                Password
+                <input
+                  type="password"
+                  value={deletePassword}
+                  onChange={e => setDeletePassword(e.target.value)}
+                  required
+                  disabled={deleteBusy}
+                  style={{
+                    width: "100%", padding: "10px", marginTop: "4px",
+                    borderRadius: "6px", border: "1px solid #ccc"
+                  }}
+                />
+              </label>
+
+              <div style={{
+                display: "flex", justifyContent: "flex-end", gap: "10px"
+              }}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={cancelDeleteExpense}
+                  disabled={deleteBusy}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="delete-button"
+                  style={{
+                    backgroundColor: "#dc2626", color: "white",
+                    padding: "8px 16px", borderRadius: "6px",
+                    border: "none", cursor: "pointer"
+                  }}
+                  disabled={deleteBusy}
+                >
+                  {deleteBusy ? "Verifying..." : "Delete Expense"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       </main>
     </div>
   );
 }
 
 export default App;
+
