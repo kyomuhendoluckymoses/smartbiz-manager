@@ -122,6 +122,8 @@ function App() {
   }, []);
 
   const [products, setProducts] = useState([]);
+  const [productVariants, setProductVariants] = useState([]);
+const [variantRows, setVariantRows] = useState([{ name: "", quantity: "" }]);
   const [trashedProducts, setTrashedProducts] = useState([]);
   const [stockSearch, setStockSearch] = useState("");
   const [stockFilter, setStockFilter] = useState("All");
@@ -157,6 +159,7 @@ function App() {
   });
 
   const [saleForm, setSaleForm] = useState(emptySale);
+  const [selectedVariantId, setSelectedVariantId] = useState("");
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const [bankForm, setBankForm] = useState(emptyBank);
 
@@ -293,9 +296,10 @@ function App() {
       // Run stock migration only after cloud records have been restored.
       await migrateExistingStock();
 
-      const [p, s, c, pay, ex, bank, purchases, batches, accounts, transactions, transfers] =
+      const [p, variants, s, c, pay, ex, bank, purchases, batches, accounts, transactions, transfers] =
         await Promise.all([
           db.products.toArray(),
+          db.productVariants.toArray(),
           db.sales.orderBy("createdAt").reverse().toArray(),
           db.customers.toArray(),
           db.payments.orderBy("createdAt").reverse().toArray(),
@@ -309,6 +313,7 @@ function App() {
         ]);
 
       setProducts(p.filter(product => !product.deletedAt));
+      setProductVariants(variants);
       setTrashedProducts(p.filter(product => Boolean(product.deletedAt)));
       setSales(s);
       setCustomers(c);
@@ -475,81 +480,123 @@ function App() {
   }
 
     async function addProduct(e) {
-    e.preventDefault();
-    setError("");
-    setSuccess("");
+  e.preventDefault();
+  setError("");
+  setSuccess("");
 
-    const buying = parseFloat(form.buyingPrice);
-    const selling = parseFloat(form.sellingPrice);
-    const quantity = parseInt(form.quantity, 10);
+  const buying = parseFloat(form.buyingPrice);
+  const enteredVariants = variantRows
+    .map(row => ({
+      name: String(row.name || "").trim(),
+      quantity: row.quantity === "" ? NaN : Number(row.quantity)
+    }));
 
-    if (!form.name.trim() || isNaN(buying) || buying <= 0 || isNaN(quantity) || quantity < 0) {
-      setError("Enter a product name, valid buying price and stock quantity.");
-      return;
-    }
+  const hasPartialVariant = enteredVariants.some(row =>
+    (row.name && (!Number.isInteger(row.quantity) || row.quantity < 0)) ||
+    (!row.name && row.quantity !== "" && !Number.isNaN(row.quantity))
+  );
 
-    try {
-      if (editingProductId !== null) {
-        await db.products.update(editingProductId, {
+  const variants = enteredVariants.filter(row => row.name);
+  const hasVariants = variants.length > 0;
+  const quantity = hasVariants
+    ? variants.reduce((sum, row) => sum + row.quantity, 0)
+    : Number.parseInt(form.quantity, 10);
+
+  if (!form.name.trim() || !Number.isFinite(buying) || buying <= 0 ||
+      hasPartialVariant ||
+      (hasVariants && variants.some(row => !Number.isInteger(row.quantity) || row.quantity < 0)) ||
+      (!hasVariants && (!Number.isInteger(quantity) || quantity < 0))) {
+    setError("Enter a product name, valid buying price, and valid stock quantities for every size.");
+    return;
+  }
+
+  try {
+    if (editingProductId !== null) {
+      await db.products.update(editingProductId, {
+        name: form.name.trim(),
+        category: form.category.trim(),
+        sku: form.sku.trim(),
+        buyingPrice: buying
+      });
+
+      setEditingProductId(null);
+      setSuccess("Product details updated. Stock history preserved.");
+    } else {
+      await db.transaction("rw", db.products, db.stockBatches, db.productVariants, async () => {
+        const now = new Date().toISOString();
+
+        const productId = await db.products.add({
           name: form.name.trim(),
           category: form.category.trim(),
           sku: form.sku.trim(),
           buyingPrice: buying,
-          // Existing selling price is managed separately; preserve it.
+          quantity,
+          createdAt: now,
+          updatedAt: now
         });
 
-        setEditingProductId(null);
-        setSuccess("Product details updated. Stock history preserved.");
-      } else {
-        await db.transaction("rw", db.products, db.stockBatches, async () => {
-          const now = new Date().toISOString();
-
-          const productId = await db.products.add({
-            name: form.name.trim(),
-            category: form.category.trim(),
-            sku: form.sku.trim(),
-            buyingPrice: buying,
-            // Existing selling price is managed separately; preserve it.,
-            quantity,
-            createdAt: now
-          });
-
-          if (quantity > 0) {
-            await db.stockBatches.add({
+        if (hasVariants) {
+          for (const variant of variants) {
+            const variantId = await db.productVariants.add({
               productId,
-              purchaseId: null,
-              supplierName: "Opening stock",
-              quantityReceived: quantity,
-              quantityRemaining: quantity,
-              unitCost: buying,
-              purchaseDate: today(),
+              name: variant.name,
+              quantity: variant.quantity,
               createdAt: now,
-              location: "Main Shop",
-              batchType: "Opening stock"
+              updatedAt: now
             });
+
+            if (variant.quantity > 0) {
+              await db.stockBatches.add({
+                productId,
+                variantId,
+                purchaseId: null,
+                supplierName: "Opening stock",
+                quantityReceived: variant.quantity,
+                quantityRemaining: variant.quantity,
+                unitCost: buying,
+                purchaseDate: today(),
+                createdAt: now,
+                location: "Main Shop",
+                batchType: "Opening stock"
+              });
+            }
           }
-        });
-
-        setSuccess("Product saved successfully.");
-      }
-
-      setForm({
-        name: "",
-        category: "",
-        sku: "",
-        buyingPrice: "",
-        sellingPrice: "",
-        quantity: ""
+        } else if (quantity > 0) {
+          await db.stockBatches.add({
+            productId,
+            purchaseId: null,
+            supplierName: "Opening stock",
+            quantityReceived: quantity,
+            quantityRemaining: quantity,
+            unitCost: buying,
+            purchaseDate: today(),
+            createdAt: now,
+            location: "Main Shop",
+            batchType: "Opening stock"
+          });
+        }
       });
 
-      setShowForm(false);
-      await loadData();
-    } catch (err) {
-      setError("Could not save product: " + err.message);
+      setSuccess("Product and size-specific opening stock saved successfully.");
     }
-  }
 
-  function startEditProduct(product) {
+    setForm({
+      name: "",
+      category: "",
+      sku: "",
+      buyingPrice: "",
+      sellingPrice: "",
+      quantity: ""
+    });
+    setVariantRows([{ name: "", quantity: "" }]);
+    setShowForm(false);
+    await loadData();
+  } catch (err) {
+    setError("Could not save product: " + err.message);
+  }
+}
+
+function startEditProduct(product) {
     setEditingProductId(product.id);
     setForm({
       name: product.name || "",
@@ -685,7 +732,7 @@ function App() {
   function getShopStock(productId, location) {
     return stockBatches
       .filter(batch =>
-        batch.productId === productId &&
+        String(batch.productId) === String(productId) &&
         normalizeLocation(batch.location || "Main Shop") === normalizeLocation(location)
       )
       .reduce((sum, batch) => sum + Number(batch.quantityRemaining || 0), 0);
@@ -695,6 +742,21 @@ function App() {
   const selectedProduct = products.find(
     p => String(p.id) === saleForm.productId
   );
+
+const selectedVariant = productVariants.find(v =>
+  String(v.id) === String(selectedVariantId) &&
+  String(v.productId) === String(selectedProduct?.id)
+);
+
+const selectedVariantStock = selectedVariant
+  ? stockBatches
+      .filter(b =>
+        String(b.variantId) === String(selectedVariant.id) &&
+        normalizeLocation(b.location || "Main Shop") === normalizeLocation(saleForm.location || "Main Shop")
+      )
+      .reduce((sum, b) => sum + Number(b.quantityRemaining || 0), 0)
+  : 0;
+
 
   const saleQuantity = Number(saleForm.quantity) || 0;
 
@@ -706,10 +768,11 @@ function App() {
     : Math.max(0, Number(saleForm.amountPaid) || 0);
   const remainingBalance = Math.max(0, saleTotal - amountPaid);
 
-  function calculateFifoPreview(productId, quantity) {
+  function calculateFifoPreview(productId, quantity, variantId = null) {
     const batches = stockBatches
       .filter(b =>
-        b.productId === productId &&
+        String(b.productId) === String(productId) &&
+        (variantId == null ? b.variantId == null : String(b.variantId) === String(variantId)) &&
         normalizeLocation(b.location || "Main Shop") === normalizeLocation(saleForm.location || "Main Shop") &&
         Number(b.quantityRemaining || 0) > 0
       )
@@ -736,8 +799,14 @@ function App() {
     return { cost, available: remaining === 0 };
   }
 
+  const productHasVariants = !!selectedProduct && productVariants.some(
+    v => String(v.productId) === String(selectedProduct.id)
+  );
+
   const fifoPreview = selectedProduct
-    ? calculateFifoPreview(selectedProduct.id, saleQuantity)
+    ? (productHasVariants && !selectedVariant
+        ? { cost: 0, available: false }
+        : calculateFifoPreview(selectedProduct.id, saleQuantity, selectedVariant?.id ?? null))
     : { cost: 0, available: false };
 
   const saleProfit = saleTotal - fifoPreview.cost;
@@ -748,7 +817,12 @@ function App() {
     setSuccess("");
 
     if (!selectedProduct) return setError("This item is not registered in available stock. Select an item from the suggestions.");
-    if (!Number.isInteger(saleQuantity) || saleQuantity <= 0)
+
+    if (productHasVariants && !selectedVariant)
+      return setError("Select the product size or measurement.");
+    if (selectedVariant && saleQuantity > selectedVariantStock)
+      return setError("Not enough stock for the selected size at this shop.");
+if (!Number.isInteger(saleQuantity) || saleQuantity <= 0)
       return setError("Enter a valid quantity.");
     if (!Number.isFinite(Number(saleForm.sellingPrice)) || Number(saleForm.sellingPrice) <= 0)
       return setError("Enter a valid selling price.");
@@ -779,7 +853,7 @@ function App() {
       await db.transaction(
         "rw",
         db.products, db.sales, db.customers,
-        db.payments, db.stockBatches,
+        db.payments, db.stockBatches, db.productVariants,
         db.financialAccounts, db.financialTransactions,
         async () => {
           const product = await db.products.get(selectedProduct.id);
@@ -787,14 +861,29 @@ function App() {
           if (!product || Number(product.quantity || 0) < saleQuantity)
             throw new Error("Business-wide stock changed. Refresh and try again.");
 
-          const batches = await db.stockBatches
+
+           const variantRecord = selectedVariant
+             ? await db.productVariants.get(selectedVariant.id)
+             : null;
+
+           if (selectedVariant && (
+             !variantRecord ||
+             String(variantRecord.productId) !== String(product.id) ||
+             Number(variantRecord.quantity || 0) < saleQuantity
+           )) {
+             throw new Error("Stock for the selected size changed. Refresh and try again.");
+           }
+const batches = await db.stockBatches
             .where("productId").equals(product.id).toArray();
 
           const availableBatches = batches
             .filter(b =>
-              normalizeLocation(b.location || "Main Shop") === normalizeLocation(saleForm.location || "Main Shop") &&
-              Number(b.quantityRemaining || 0) > 0
-            )
+               (variantRecord
+                 ? String(b.variantId) === String(variantRecord.id)
+                 : b.variantId == null) &&
+               normalizeLocation(b.location || "Main Shop") === normalizeLocation(saleForm.location || "Main Shop") &&
+               Number(b.quantityRemaining || 0) > 0
+             )
             .sort((a, b) =>
               String(a.purchaseDate).localeCompare(String(b.purchaseDate)) ||
               a.id - b.id
@@ -846,6 +935,13 @@ function App() {
             quantity: Number(product.quantity) - saleQuantity
           });
 
+           if (variantRecord) {
+             await db.productVariants.update(variantRecord.id, {
+               quantity: Number(variantRecord.quantity) - saleQuantity,
+               updatedAt: now
+             });
+           }
+
           const saleId = await db.sales.add({
             receiptNumber,
             customerId: customer.id,
@@ -853,6 +949,8 @@ function App() {
             customerPhone: saleForm.customerPhone.trim(),
             productId: product.id,
             productName: product.name,
+            variantId: variantRecord ? variantRecord.id : null,
+            variantName: variantRecord ? variantRecord.name : null,
             location: String(saleForm.location || "Main Shop").trim(),
             quantity: saleQuantity,
             buyingPrice: costOfGoods / saleQuantity,
@@ -1958,8 +2056,28 @@ function App() {
                     <label>Product code<input name="sku" value={form.sku} onChange={updateField} /></label>
                     <label>Buying price (UGX) *<input type="number" min="1" name="buyingPrice" value={form.buyingPrice} onChange={updateField} required /></label>
 
-                    <label>Quantity *<input type="number" min="0" step="1" name="quantity" value={form.quantity} onChange={updateField} required /></label>
+                    <label>Quantity (products without sizes)<input type="number" min="0" step="1" name="quantity" value={form.quantity} onChange={updateField} /></label>
                   </div>
+                  {editingProductId === null && (
+                    <div className="variant-section">
+                      <h4>Product sizes / measurements (optional)</h4>
+                      {variantRows.map((row, index) => (
+                        <div className="form-grid" key={index}>
+                          <label>Size or measurement
+                            <input value={row.name} placeholder="e.g. 4x6" onChange={e => setVariantRows(rows => rows.map((item, i) => i === index ? { ...item, name: e.target.value } : item))} />
+                          </label>
+                          <label>Opening stock quantity
+                            <input type="number" min="0" step="1" value={row.quantity} onChange={e => setVariantRows(rows => rows.map((item, i) => i === index ? { ...item, quantity: e.target.value } : item))} />
+                          </label>
+                          {variantRows.length > 1 && (
+                            <button type="button" className="secondary-button" onClick={() => setVariantRows(rows => rows.filter((_, i) => i !== index))}>Remove size</button>
+                          )}
+                        </div>
+                      ))}
+                      <button type="button" className="secondary-button" onClick={() => setVariantRows(rows => [...rows, { name: "", quantity: "" }])}>+ Add another size</button>
+                    </div>
+                  )}
+
 
                   <div className="form-actions">
                     <button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Cancel</button>
@@ -2022,33 +2140,77 @@ function App() {
                   <label>Shop serving this customer *
                     <select
                       value={saleForm.location || "Main Shop"}
-                      onChange={e => setSaleForm({ ...saleForm, location: e.target.value, productId: "" })}
+                      onChange={e => { setSaleForm({ ...saleForm, location: e.target.value, productId: "" }); setSelectedVariantId(""); }}
                       required
                     >
                       {shopLocations.map(location => <option key={location} value={location}>{location}</option>)}
                     </select>
                   </label>
 
-                  <label>Items *
-                    <select value={saleForm.productId} onChange={e => {
-                      const selectedId = e.target.value;
-                      const match = products.find(p => String(p.id) === selectedId);
-                      
-                      setSaleForm({
-                        ...saleForm,
-                        productId: selectedId,
-                        sellingPrice: match && match.sellingPrice ? String(match.sellingPrice) : ""
-                      });
-                      setError("");
-                    }} required>
-                      <option value="">Search and select an item from available stock...</option>
-                      {products.filter(p => getShopStock(p.id, saleForm.location || "Main Shop") > 0).map(p => (
-                        <option key={p.id} value={String(p.id)}>
-                          {p.name}{p.sku ? " (" + p.sku + ")" : ""} — {saleForm.location || "Main Shop"} stock: {getShopStock(p.id, saleForm.location || "Main Shop")}
-                        </option>
-                      ))}
+                  <label>Items / Size *
+                    <select
+                      value={selectedProduct
+                        ? (selectedVariant ? String(selectedProduct.id) + "::" + String(selectedVariant.id) : String(selectedProduct.id))
+                        : ""}
+                      onChange={e => {
+                        const [productId, variantId] = e.target.value.split("::");
+                        const match = products.find(p => String(p.id) === productId);
+
+                        setSaleForm({
+                          ...saleForm,
+                          productId: productId || "",
+                          sellingPrice: match && match.sellingPrice
+                            ? String(match.sellingPrice)
+                            : ""
+                        });
+
+                        setSelectedVariantId(variantId || "");
+                        setError("");
+                      }}
+                      required
+                    >
+                      <option value="">Search and select an item and size...</option>
+                      {products.flatMap(p => {
+                        const variants = productVariants.filter(
+                          v => String(v.productId) === String(p.id)
+                        );
+
+                        if (variants.length > 0) {
+                          return variants.map(v => {
+                            const available = stockBatches
+                              .filter(b =>
+                                String(b.variantId) === String(v.id) &&
+                                normalizeLocation(b.location || "Main Shop") ===
+                                  normalizeLocation(saleForm.location || "Main Shop")
+                              )
+                              .reduce((sum, b) =>
+                                sum + Number(b.quantityRemaining || 0), 0);
+
+                            return available > 0 ? (
+                              <option
+                                key={String(p.id) + "::" + String(v.id)}
+                                value={String(p.id) + "::" + String(v.id)}
+                              >
+                                {p.name} — Category: {p.category || "Uncategorized"} — Size {v.name} — Stock: {available}
+                              </option>
+                            ) : null;
+                          });
+                        }
+
+                        const available = getShopStock(
+                          p.id,
+                          saleForm.location || "Main Shop"
+                        );
+
+                        return available > 0 ? [
+                          <option key={p.id} value={String(p.id)}>
+                            {p.name} — Category: {p.category || "Uncategorized"}{p.sku ? " — Size " + p.sku : ""} — Stock: {available}
+                          </option>
+                        ] : [];
+                      })}
                     </select>
                   </label>
+
                   <label>Quantity *
                     <input type="number" min="1" step="1" value={saleForm.quantity} onChange={e => setSaleForm({ ...saleForm, quantity: e.target.value })} required />
                   </label>

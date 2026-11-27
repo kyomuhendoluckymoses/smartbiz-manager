@@ -31,6 +31,7 @@ const LINK_TARGETS = {
   },
   financialTransactions: { accountSyncId: "financialAccounts" },
   stockTransfers: { productSyncId: "products" },
+  productVariants: { productSyncId: "products" },
 };
 
 function omit(record, keys) {
@@ -105,6 +106,8 @@ function addLinks(table, record, maps) {
   if (table === "sales") {
     valid = ok("customerSyncId", maps.customers, record.customerId) &&
       ok("productSyncId", maps.products, record.productId);
+  } else if (table === "productVariants") {
+    valid = ok("productSyncId", maps.products, record.productId);
   } else if (table === "payments") {
     valid = ok("customerSyncId", maps.customers, record.customerId) &&
       ok("saleSyncId", maps.sales, record.saleId);
@@ -178,6 +181,8 @@ function relationshipChanges(table, record, maps) {
 
   if (table === "sales") {
     changes.customerId = get("customers", links.customerSyncId);
+    changes.productId = get("products", links.productSyncId);
+  } else if (table === "productVariants") {
     changes.productId = get("products", links.productSyncId);
   } else if (table === "payments") {
     changes.customerId = get("customers", links.customerSyncId);

@@ -14,7 +14,8 @@ const syncTables = [
   "stockBatches",
   "financialAccounts",
   "financialTransactions",
-  "stockTransfers"
+  "stockTransfers",
+  "productVariants"
 ];
 
 // DATABASE VERSION 1
@@ -158,6 +159,11 @@ db.version(9).stores({
       }
     });
   }
+});
+
+// DATABASE VERSION 10 - USER-DEFINED PRODUCT SIZES
+db.version(10).stores({
+  productVariants: "++id, syncId, productId, name, sku, createdAt, updatedAt"
 });
 
 // While the sync engine writes records that came from the cloud it must keep
