@@ -239,9 +239,7 @@ async function fetchCloudRows(businessId, entityType) {
   }
 
   return rows;
-}
-
-let running = null;
+}let running = null;
 
 // Two-way synchronization.
 //  - Records that exist on only one side are copied to the other side.
@@ -251,14 +249,26 @@ let running = null;
 export function syncLocalToCloud() {
   if (running) return running;
 
-  running = runSync().finally(() => {
+  running = runSync({ safeMode: false }).finally(() => {
     running = null;
   });
 
   return running;
 }
 
-async function runSync() {
+// Safe background sync: upload/import new records, but do not propagate
+// deletions or overwrite conflicting records automatically.
+export function syncAutomatically() {
+  if (running) return running;
+
+  running = runSync({ safeMode: true }).finally(() => {
+    running = null;
+  });
+
+  return running;
+}
+
+async function runSync({ safeMode = false } = {}) {
   const business = await getAuthorizedBusiness();
 
   const { data: { session }, error: sessionError } =
@@ -336,11 +346,31 @@ async function runSync() {
     }
   }
 
-  // 3. Share deletions made on this device.
+  // 3. Read local pending deletions.
   const pendingDeletions = await db.syncDeletions.toArray();
   const uploadedDeletionIds = [];
+  const pendingDeletionIds = {};
 
-  if (pendingDeletions.length) {
+  for (const table of TABLES) pendingDeletionIds[table] = new Set();
+
+  for (const item of pendingDeletions) {
+    if (
+      pendingDeletionIds[item.entityType] &&
+      UUID_PATTERN.test(item.syncId || "")
+    ) {
+      pendingDeletionIds[item.entityType].add(item.syncId);
+    }
+  }
+
+  // Automatic sync does not propagate pending deletions.
+  if (pendingDeletions.length && safeMode) {
+    warnings.push(
+      "Pending deletions were left untouched during automatic sync."
+    );
+  }
+
+  // Full two-way sync continues to share deletions as before.
+  if (pendingDeletions.length && !safeMode) {
     const tombstones = pendingDeletions
       .filter(item => TABLES.includes(item.entityType) &&
         UUID_PATTERN.test(item.syncId || ""))
@@ -389,16 +419,20 @@ async function runSync() {
   const localToDelete = {};
 
   for (const table of TABLES) {
-    cloud[table] = cloud[table].filter(
-      record => !deletedIds[table].has(record.syncId)
+    cloud[table] = cloud[table].filter(record =>
+      !deletedIds[table].has(record.syncId) &&
+      !(safeMode && pendingDeletionIds[table].has(record.syncId))
     );
+
     cloudById[table] = new Map(cloud[table].map(r => [r.syncId, r]));
 
-    localToDelete[table] = local[table].filter(
-      record => deletedIds[table].has(record.syncId)
-    );
-    local[table] = local[table].filter(
-      record => !deletedIds[table].has(record.syncId)
+    localToDelete[table] = safeMode
+      ? []
+      : local[table].filter(record => deletedIds[table].has(record.syncId));
+
+    local[table] = local[table].filter(record =>
+      !deletedIds[table].has(record.syncId) &&
+      !(safeMode && pendingDeletionIds[table].has(record.syncId))
     );
   }
 
@@ -450,6 +484,14 @@ async function runSync() {
         continue;
       }
 
+      // Automatic background sync never chooses a winner for conflicting edits.
+      if (safeMode) {
+        warnings.push(
+          "A conflicting " + table + " record was left unchanged during automatic sync."
+        );
+        continue;
+      }
+
       // Same record, different content: the newest edit wins.
       const localTime = timeOf(record);
       const cloudTime = timeOf(cloudRecord);
@@ -480,9 +522,7 @@ async function runSync() {
 
       imports[table].push(record);
     }
-  }
-
-  // 6. Upload new and newer-here records.
+  }  // 6. Upload new and newer-here records.
   for (const table of TABLES) {
     const rows = uploads[table].map(record => ({
       business_id: business.id,
@@ -563,7 +603,8 @@ async function runSync() {
           }
         }
 
-        if (uploadedDeletionIds.length) {
+        // Only full two-way sync clears successfully shared deletions.
+        if (!safeMode && uploadedDeletionIds.length) {
           await db.syncDeletions.bulkDelete(uploadedDeletionIds);
         }
       }
@@ -575,12 +616,14 @@ async function runSync() {
   return {
     success: true,
     business: business.name,
-    mode: "TWO-WAY MERGE",
+    mode: safeMode ? "SAFE AUTOMATIC SYNC" : "TWO-WAY MERGE",
     tables: results,
     warnings,
     message: warnings.length
       ? "Sync finished with " + warnings.length + " warning(s)."
-      : "Two-way sync completed.",
+      : safeMode
+        ? "Safe automatic sync completed."
+        : "Two-way sync completed.",
   };
 }
 
@@ -591,6 +634,3 @@ export async function syncSmartBiz() {
 export async function syncToCloud() {
   return syncLocalToCloud();
 }
-
-
-

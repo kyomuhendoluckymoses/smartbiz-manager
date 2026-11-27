@@ -6,7 +6,9 @@ import {
 } from "lucide-react";
 
 import { db, deleteWithSync } from "./db";
-import { syncLocalToCloud } from "./lib/sync";
+import DailyBalance from "./DailyBalance";
+
+import { syncAutomatically } from "./lib/sync";
 import { supabase, supabaseUrl, supabaseKey } from "./lib/supabase";
 import ProtectedCleanup from "./ProtectedCleanup";
 import "./App.css";
@@ -199,7 +201,10 @@ const [variantRows, setVariantRows] = useState([{ name: "", quantity: "" }]);
     { name: "Expenses", icon: Wallet },
     { name: "Banking", icon: Landmark },
     { name: "Financial Management", icon: Wallet },
+    { name: "Daily Balance", icon: Wallet },
+    { name: "Balance History", icon: Receipt },
     { name: "Reports", icon: ChartNoAxesCombined },
+
     { name: "Settings", icon: Settings }
   ];
 
@@ -279,7 +284,7 @@ const [variantRows, setVariantRows] = useState([{ name: "", quantity: "" }]);
       if (navigator.onLine) {
         // A sync problem must never stop the app from showing local records.
         try {
-          const result = await syncLocalToCloud();
+          const result = await syncAutomatically();
           console.log("SmartBiz sync completed:", result);
 
           if (result.warnings?.length) {
@@ -1333,7 +1338,7 @@ const batches = await db.stockBatches
         updated.productId = matchedProduct ? String(matchedProduct.id) : "";
         if (matchedProduct) {
           updated.buyingPrice = String(matchedProduct.buyingPrice || "");
-          
+
         } else if (item.productId) {
           updated.buyingPrice = "";
           updated.sellingPrice = "";
@@ -1378,7 +1383,7 @@ const batches = await db.stockBatches
         return setError("Enter a valid buying price for item " + (i + 1) + ".");
       if (!Number.isFinite(Number(item.sellingPrice)) || Number(item.sellingPrice) <= 0)
         return setError("Enter a valid selling price for item " + (i + 1) + ".");
-      
+
     }
 
     const payingAccount = purchaseForm.paymentMethod === "Credit"
@@ -1415,7 +1420,7 @@ const batches = await db.stockBatches
 
             const quantity = Number(item.quantity);
             const buyingPrice = Number(item.buyingPrice);
-            
+
 
             if (!product) {
               const newProductId = await db.products.add({
@@ -2227,7 +2232,7 @@ const batches = await db.stockBatches
                     <input value={saleForm.customerPhone} onChange={e => setSaleForm({ ...saleForm, customerPhone: e.target.value })} />
                   </label>
 
-                  
+
 
                   <label>Sale type *
                     <select
@@ -3090,9 +3095,9 @@ const batches = await db.stockBatches
 
               <div className="cards">
                 <div className="card">
-                  <p>Total Stock Across All Shops</p>
-                  <h2>{totalUnits}</h2>
-                  <small>Combined business inventory</small>
+                  <p>Total Products Across All Shops</p>
+                  <h2>{totalProducts}</h2>
+                  <small>Different products in your business</small>
                 </div>
                 <div className="card">
                   <p>Products In Stock</p>
@@ -3277,7 +3282,7 @@ const batches = await db.stockBatches
               </div>
 
 
-            
+
               <div className="table-card" style={{ marginTop: "24px" }}>
                 <h3>Stock Movement History</h3>
                 <p className="muted">This shows exactly why stock is reducing. Look at the "Type" column.</p>
@@ -3868,6 +3873,23 @@ const batches = await db.stockBatches
               </div>
             </>
           )}
+          {activePage === "Daily Balance" && (
+            <DailyBalance
+              db={db}
+              products={products}
+              productVariants={productVariants}
+              stockBatches={stockBatches}
+              sales={sales}
+              payments={payments}
+              expenses={expenses}
+              stockPurchases={stockPurchases}
+              money={money}
+              onSaved={loadData}
+            />
+          )}
+
+
+
 
           {activePage === "Settings" && (
             <div>
@@ -3893,42 +3915,42 @@ const batches = await db.stockBatches
             <p style={{ fontSize: "14px", color: "#555", marginBottom: "20px" }}>
               To move this product to Trash, please verify your owner account.
             </p>
-            
+
             <form onSubmit={confirmDeleteProduct}>
               <label style={{ display: "block", marginBottom: "12px", fontSize: "14px", fontWeight: "bold" }}>
                 Owner Email
-                <input 
-                  type="email" 
-                  value={deleteEmail} 
-                  onChange={e => setDeleteEmail(e.target.value)} 
-                  required 
+                <input
+                  type="email"
+                  value={deleteEmail}
+                  onChange={e => setDeleteEmail(e.target.value)}
+                  required
                   style={{ width: "100%", padding: "10px", marginTop: "4px", borderRadius: "6px", border: "1px solid #ccc" }}
                 />
               </label>
 
               <label style={{ display: "block", marginBottom: "20px", fontSize: "14px", fontWeight: "bold" }}>
                 Password
-                <input 
-                  type="password" 
-                  value={deletePassword} 
-                  onChange={e => setDeletePassword(e.target.value)} 
-                  required 
+                <input
+                  type="password"
+                  value={deletePassword}
+                  onChange={e => setDeletePassword(e.target.value)}
+                  required
                   style={{ width: "100%", padding: "10px", marginTop: "4px", borderRadius: "6px", border: "1px solid #ccc" }}
                 />
               </label>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-                <button 
-                  type="button" 
-                  className="secondary-button" 
+                <button
+                  type="button"
+                  className="secondary-button"
                   onClick={cancelDeleteProduct}
                   disabled={deleteBusy}
                 >
                   Cancel
                 </button>
-                <button 
-                  type="submit" 
-                  className="delete-button" 
+                <button
+                  type="submit"
+                  className="delete-button"
                   style={{ backgroundColor: "#dc2626", color: "white", padding: "8px 16px", borderRadius: "6px", border: "none", cursor: "pointer" }}
                   disabled={deleteBusy}
                 >
@@ -4029,4 +4051,3 @@ const batches = await db.stockBatches
 }
 
 export default App;
-

@@ -79,3 +79,6 @@ frontend/supabase/.temp/
 # Temporary stock diagnostic files
 frontend/diagnose-stock.html
 frontend/src/diagnose-stock.js
+
+# Private SmartBiz cloud backup
+cloud-business-records-backup.json

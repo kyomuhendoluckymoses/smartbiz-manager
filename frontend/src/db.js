@@ -15,7 +15,8 @@ const syncTables = [
   "financialAccounts",
   "financialTransactions",
   "stockTransfers",
-  "productVariants"
+  "productVariants",
+  "dailyBalances"
 ];
 
 // DATABASE VERSION 1
@@ -116,7 +117,7 @@ db.version(8).stores({
   financialTransactions: "++id, syncId, accountId, transactionType, category, referenceId, transactionDate, createdAt",
   stockTransfers: "++id, syncId, productId, fromLocation, toLocation, transferDate, createdAt"
 }).upgrade(async tx => {
-  for (const tableName of syncTables) {
+  for (const tableName of tx.storeNames.filter(name => syncTables.includes(name))) {
     await tx.table(tableName).toCollection().modify(record => {
       if (!record.syncId) {
         record.syncId = crypto.randomUUID();
@@ -144,7 +145,7 @@ db.version(9).stores({
 }).upgrade(async tx => {
   const now = new Date().toISOString();
 
-  for (const tableName of syncTables) {
+  for (const tableName of tx.storeNames.filter(name => syncTables.includes(name))) {
     await tx.table(tableName).toCollection().modify(record => {
       if (!record.syncId) {
         record.syncId = crypto.randomUUID();
@@ -164,6 +165,23 @@ db.version(9).stores({
 // DATABASE VERSION 10 - USER-DEFINED PRODUCT SIZES
 db.version(10).stores({
   productVariants: "++id, syncId, productId, name, sku, createdAt, updatedAt"
+});
+
+// DATABASE VERSION 11 - DAILY BALANCE HISTORY
+db.version(11).stores({
+  dailyBalances: "++id, &balanceDate, status, createdAt"
+});
+// DATABASE VERSION 12 - DAILY BALANCE CLOUD SYNCHRONIZATION
+db.version(12).stores({
+  dailyBalances: "++id, &balanceDate, status, createdAt, syncId"
+}).upgrade(async tx => {
+  const now = new Date().toISOString();
+
+  await tx.table("dailyBalances").toCollection().modify(record => {
+    if (!record.syncId) record.syncId = crypto.randomUUID();
+    if (!record.createdAt) record.createdAt = now;
+    if (!record.updatedAt) record.updatedAt = record.createdAt || now;
+  });
 });
 
 // While the sync engine writes records that came from the cloud it must keep
