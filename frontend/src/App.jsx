@@ -2102,6 +2102,7 @@ const batches = await db.stockBatches
                     <thead>
                       <tr>
                         <th>Product</th>
+                        <th>Size</th>
                         <th>Buying price</th>
                         <th>Quantity</th>
                         <th>Action</th>
@@ -2111,6 +2112,7 @@ const batches = await db.stockBatches
                       {products.map(p => (
                         <tr key={p.id}>
                           <td><strong>{p.name}</strong><small>{p.category}</small></td>
+                          <td>{productVariants.filter(v => String(v.productId) === String(p.id)).map(v => v.name).filter(Boolean).join(", ") || p.sku || "—"}</td>
                           <td>{money(p.buyingPrice)}</td>
                           <td>{p.quantity}</td>
                           <td>
