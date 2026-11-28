@@ -6,9 +6,7 @@ import {
 } from "lucide-react";
 
 import { db, deleteWithSync } from "./db";
-import DailyBalance from "./DailyBalance";
-
-import { syncAutomatically } from "./lib/sync";
+import { syncLocalToCloud } from "./lib/sync";
 import { supabase, supabaseUrl, supabaseKey } from "./lib/supabase";
 import ProtectedCleanup from "./ProtectedCleanup";
 import "./App.css";
@@ -124,8 +122,6 @@ function App() {
   }, []);
 
   const [products, setProducts] = useState([]);
-  const [productVariants, setProductVariants] = useState([]);
-const [variantRows, setVariantRows] = useState([{ name: "", quantity: "" }]);
   const [trashedProducts, setTrashedProducts] = useState([]);
   const [stockSearch, setStockSearch] = useState("");
   const [stockFilter, setStockFilter] = useState("All");
@@ -161,7 +157,6 @@ const [variantRows, setVariantRows] = useState([{ name: "", quantity: "" }]);
   });
 
   const [saleForm, setSaleForm] = useState(emptySale);
-  const [selectedVariantId, setSelectedVariantId] = useState("");
   const [expenseForm, setExpenseForm] = useState(emptyExpense);
   const [bankForm, setBankForm] = useState(emptyBank);
 
@@ -201,10 +196,7 @@ const [variantRows, setVariantRows] = useState([{ name: "", quantity: "" }]);
     { name: "Expenses", icon: Wallet },
     { name: "Banking", icon: Landmark },
     { name: "Financial Management", icon: Wallet },
-    { name: "Daily Balance", icon: Wallet },
-    { name: "Balance History", icon: Receipt },
     { name: "Reports", icon: ChartNoAxesCombined },
-
     { name: "Settings", icon: Settings }
   ];
 
@@ -284,7 +276,7 @@ const [variantRows, setVariantRows] = useState([{ name: "", quantity: "" }]);
       if (navigator.onLine) {
         // A sync problem must never stop the app from showing local records.
         try {
-          const result = await syncAutomatically();
+          const result = await syncLocalToCloud();
           console.log("SmartBiz sync completed:", result);
 
           if (result.warnings?.length) {
@@ -301,10 +293,9 @@ const [variantRows, setVariantRows] = useState([{ name: "", quantity: "" }]);
       // Run stock migration only after cloud records have been restored.
       await migrateExistingStock();
 
-      const [p, variants, s, c, pay, ex, bank, purchases, batches, accounts, transactions, transfers] =
+      const [p, s, c, pay, ex, bank, purchases, batches, accounts, transactions, transfers] =
         await Promise.all([
           db.products.toArray(),
-          db.productVariants.toArray(),
           db.sales.orderBy("createdAt").reverse().toArray(),
           db.customers.toArray(),
           db.payments.orderBy("createdAt").reverse().toArray(),
@@ -318,7 +309,6 @@ const [variantRows, setVariantRows] = useState([{ name: "", quantity: "" }]);
         ]);
 
       setProducts(p.filter(product => !product.deletedAt));
-      setProductVariants(variants);
       setTrashedProducts(p.filter(product => Boolean(product.deletedAt)));
       setSales(s);
       setCustomers(c);
@@ -485,123 +475,83 @@ const [variantRows, setVariantRows] = useState([{ name: "", quantity: "" }]);
   }
 
     async function addProduct(e) {
-  e.preventDefault();
-  setError("");
-  setSuccess("");
+    e.preventDefault();
+    setError("");
+    setSuccess("");
 
-  const buying = parseFloat(form.buyingPrice);
-  const enteredVariants = variantRows
-    .map(row => ({
-      name: String(row.name || "").trim(),
-      quantity: row.quantity === "" ? NaN : Number(row.quantity)
-    }));
+    const buying = parseFloat(form.buyingPrice);
+    const selling = parseFloat(form.sellingPrice);
+    const quantity = parseInt(form.quantity, 10);
 
-  const hasPartialVariant = enteredVariants.some(row =>
-    (row.name && (!Number.isInteger(row.quantity) || row.quantity < 0)) ||
-    (!row.name && row.quantity !== "" && !Number.isNaN(row.quantity))
-  );
+    if (!form.name.trim() || !Number.isFinite(buying) || buying <= 0 ||
+        !Number.isFinite(selling) || selling <= 0 ||
+        !Number.isInteger(quantity) || quantity < 0) {
+      setError("Enter a product name, valid buying price, selling price and stock quantity.");
+      return;
+    }
 
-  const variants = enteredVariants.filter(row => row.name);
-  const hasVariants = variants.length > 0;
-  const quantity = hasVariants
-    ? variants.reduce((sum, row) => sum + row.quantity, 0)
-    : Number.parseInt(form.quantity, 10);
-
-  if (!form.name.trim() || !Number.isFinite(buying) || buying <= 0 ||
-      hasPartialVariant ||
-      (hasVariants && variants.some(row => !Number.isInteger(row.quantity) || row.quantity < 0)) ||
-      (!hasVariants && (!Number.isInteger(quantity) || quantity < 0))) {
-    setError("Enter a product name, valid buying price, and valid stock quantities for every size.");
-    return;
-  }
-
-  try {
-    if (editingProductId !== null) {
-      await db.products.update(editingProductId, {
-        name: form.name.trim(),
-        category: form.category.trim(),
-        sku: form.sku.trim(),
-        buyingPrice: buying
-      });
-
-      setEditingProductId(null);
-      setSuccess("Product details updated. Stock history preserved.");
-    } else {
-      await db.transaction("rw", db.products, db.stockBatches, db.productVariants, async () => {
-        const now = new Date().toISOString();
-
-        const productId = await db.products.add({
+    try {
+      if (editingProductId !== null) {
+        await db.products.update(editingProductId, {
           name: form.name.trim(),
           category: form.category.trim(),
           sku: form.sku.trim(),
           buyingPrice: buying,
-          quantity,
-          createdAt: now,
-          updatedAt: now
+          sellingPrice: selling
         });
 
-        if (hasVariants) {
-          for (const variant of variants) {
-            const variantId = await db.productVariants.add({
-              productId,
-              name: variant.name,
-              quantity: variant.quantity,
-              createdAt: now,
-              updatedAt: now
-            });
+        setEditingProductId(null);
+        setSuccess("Product details updated. Stock history preserved.");
+      } else {
+        await db.transaction("rw", db.products, db.stockBatches, async () => {
+          const now = new Date().toISOString();
 
-            if (variant.quantity > 0) {
-              await db.stockBatches.add({
-                productId,
-                variantId,
-                purchaseId: null,
-                supplierName: "Opening stock",
-                quantityReceived: variant.quantity,
-                quantityRemaining: variant.quantity,
-                unitCost: buying,
-                purchaseDate: today(),
-                createdAt: now,
-                location: "Main Shop",
-                batchType: "Opening stock"
-              });
-            }
-          }
-        } else if (quantity > 0) {
-          await db.stockBatches.add({
-            productId,
-            purchaseId: null,
-            supplierName: "Opening stock",
-            quantityReceived: quantity,
-            quantityRemaining: quantity,
-            unitCost: buying,
-            purchaseDate: today(),
-            createdAt: now,
-            location: "Main Shop",
-            batchType: "Opening stock"
+          const productId = await db.products.add({
+            name: form.name.trim(),
+            category: form.category.trim(),
+            sku: form.sku.trim(),
+            buyingPrice: buying,
+            sellingPrice: selling,
+            quantity,
+            createdAt: now
           });
-        }
+
+          if (quantity > 0) {
+            await db.stockBatches.add({
+              productId,
+              purchaseId: null,
+              supplierName: "Opening stock",
+              quantityReceived: quantity,
+              quantityRemaining: quantity,
+              unitCost: buying,
+              purchaseDate: today(),
+              createdAt: now,
+              location: "Main Shop",
+              batchType: "Opening stock"
+            });
+          }
+        });
+
+        setSuccess("Product saved successfully.");
+      }
+
+      setForm({
+        name: "",
+        category: "",
+        sku: "",
+        buyingPrice: "",
+        sellingPrice: "",
+        quantity: ""
       });
 
-      setSuccess("Product and size-specific opening stock saved successfully.");
+      setShowForm(false);
+      await loadData();
+    } catch (err) {
+      setError("Could not save product: " + err.message);
     }
-
-    setForm({
-      name: "",
-      category: "",
-      sku: "",
-      buyingPrice: "",
-      sellingPrice: "",
-      quantity: ""
-    });
-    setVariantRows([{ name: "", quantity: "" }]);
-    setShowForm(false);
-    await loadData();
-  } catch (err) {
-    setError("Could not save product: " + err.message);
   }
-}
 
-function startEditProduct(product) {
+  function startEditProduct(product) {
     setEditingProductId(product.id);
     setForm({
       name: product.name || "",
@@ -737,7 +687,7 @@ function startEditProduct(product) {
   function getShopStock(productId, location) {
     return stockBatches
       .filter(batch =>
-        String(batch.productId) === String(productId) &&
+        batch.productId === productId &&
         normalizeLocation(batch.location || "Main Shop") === normalizeLocation(location)
       )
       .reduce((sum, batch) => sum + Number(batch.quantityRemaining || 0), 0);
@@ -747,21 +697,6 @@ function startEditProduct(product) {
   const selectedProduct = products.find(
     p => String(p.id) === saleForm.productId
   );
-
-const selectedVariant = productVariants.find(v =>
-  String(v.id) === String(selectedVariantId) &&
-  String(v.productId) === String(selectedProduct?.id)
-);
-
-const selectedVariantStock = selectedVariant
-  ? stockBatches
-      .filter(b =>
-        String(b.variantId) === String(selectedVariant.id) &&
-        normalizeLocation(b.location || "Main Shop") === normalizeLocation(saleForm.location || "Main Shop")
-      )
-      .reduce((sum, b) => sum + Number(b.quantityRemaining || 0), 0)
-  : 0;
-
 
   const saleQuantity = Number(saleForm.quantity) || 0;
 
@@ -773,11 +708,10 @@ const selectedVariantStock = selectedVariant
     : Math.max(0, Number(saleForm.amountPaid) || 0);
   const remainingBalance = Math.max(0, saleTotal - amountPaid);
 
-  function calculateFifoPreview(productId, quantity, variantId = null) {
+  function calculateFifoPreview(productId, quantity) {
     const batches = stockBatches
       .filter(b =>
-        String(b.productId) === String(productId) &&
-        (variantId == null ? b.variantId == null : String(b.variantId) === String(variantId)) &&
+        b.productId === productId &&
         normalizeLocation(b.location || "Main Shop") === normalizeLocation(saleForm.location || "Main Shop") &&
         Number(b.quantityRemaining || 0) > 0
       )
@@ -804,14 +738,8 @@ const selectedVariantStock = selectedVariant
     return { cost, available: remaining === 0 };
   }
 
-  const productHasVariants = !!selectedProduct && productVariants.some(
-    v => String(v.productId) === String(selectedProduct.id)
-  );
-
   const fifoPreview = selectedProduct
-    ? (productHasVariants && !selectedVariant
-        ? { cost: 0, available: false }
-        : calculateFifoPreview(selectedProduct.id, saleQuantity, selectedVariant?.id ?? null))
+    ? calculateFifoPreview(selectedProduct.id, saleQuantity)
     : { cost: 0, available: false };
 
   const saleProfit = saleTotal - fifoPreview.cost;
@@ -822,12 +750,7 @@ const selectedVariantStock = selectedVariant
     setSuccess("");
 
     if (!selectedProduct) return setError("This item is not registered in available stock. Select an item from the suggestions.");
-
-    if (productHasVariants && !selectedVariant)
-      return setError("Select the product size or measurement.");
-    if (selectedVariant && saleQuantity > selectedVariantStock)
-      return setError("Not enough stock for the selected size at this shop.");
-if (!Number.isInteger(saleQuantity) || saleQuantity <= 0)
+    if (!Number.isInteger(saleQuantity) || saleQuantity <= 0)
       return setError("Enter a valid quantity.");
     if (!Number.isFinite(Number(saleForm.sellingPrice)) || Number(saleForm.sellingPrice) <= 0)
       return setError("Enter a valid selling price.");
@@ -858,7 +781,7 @@ if (!Number.isInteger(saleQuantity) || saleQuantity <= 0)
       await db.transaction(
         "rw",
         db.products, db.sales, db.customers,
-        db.payments, db.stockBatches, db.productVariants,
+        db.payments, db.stockBatches,
         db.financialAccounts, db.financialTransactions,
         async () => {
           const product = await db.products.get(selectedProduct.id);
@@ -866,29 +789,14 @@ if (!Number.isInteger(saleQuantity) || saleQuantity <= 0)
           if (!product || Number(product.quantity || 0) < saleQuantity)
             throw new Error("Business-wide stock changed. Refresh and try again.");
 
-
-           const variantRecord = selectedVariant
-             ? await db.productVariants.get(selectedVariant.id)
-             : null;
-
-           if (selectedVariant && (
-             !variantRecord ||
-             String(variantRecord.productId) !== String(product.id) ||
-             Number(variantRecord.quantity || 0) < saleQuantity
-           )) {
-             throw new Error("Stock for the selected size changed. Refresh and try again.");
-           }
-const batches = await db.stockBatches
+          const batches = await db.stockBatches
             .where("productId").equals(product.id).toArray();
 
           const availableBatches = batches
             .filter(b =>
-               (variantRecord
-                 ? String(b.variantId) === String(variantRecord.id)
-                 : b.variantId == null) &&
-               normalizeLocation(b.location || "Main Shop") === normalizeLocation(saleForm.location || "Main Shop") &&
-               Number(b.quantityRemaining || 0) > 0
-             )
+              normalizeLocation(b.location || "Main Shop") === normalizeLocation(saleForm.location || "Main Shop") &&
+              Number(b.quantityRemaining || 0) > 0
+            )
             .sort((a, b) =>
               String(a.purchaseDate).localeCompare(String(b.purchaseDate)) ||
               a.id - b.id
@@ -940,13 +848,6 @@ const batches = await db.stockBatches
             quantity: Number(product.quantity) - saleQuantity
           });
 
-           if (variantRecord) {
-             await db.productVariants.update(variantRecord.id, {
-               quantity: Number(variantRecord.quantity) - saleQuantity,
-               updatedAt: now
-             });
-           }
-
           const saleId = await db.sales.add({
             receiptNumber,
             customerId: customer.id,
@@ -954,8 +855,6 @@ const batches = await db.stockBatches
             customerPhone: saleForm.customerPhone.trim(),
             productId: product.id,
             productName: product.name,
-            variantId: variantRecord ? variantRecord.id : null,
-            variantName: variantRecord ? variantRecord.name : null,
             location: String(saleForm.location || "Main Shop").trim(),
             quantity: saleQuantity,
             buyingPrice: costOfGoods / saleQuantity,
@@ -1338,7 +1237,8 @@ const batches = await db.stockBatches
         updated.productId = matchedProduct ? String(matchedProduct.id) : "";
         if (matchedProduct) {
           updated.buyingPrice = String(matchedProduct.buyingPrice || "");
-
+          updated.sellingPrice = String(matchedProduct.sellingPrice || "");
+          
         } else if (item.productId) {
           updated.buyingPrice = "";
           updated.sellingPrice = "";
@@ -1383,7 +1283,7 @@ const batches = await db.stockBatches
         return setError("Enter a valid buying price for item " + (i + 1) + ".");
       if (!Number.isFinite(Number(item.sellingPrice)) || Number(item.sellingPrice) <= 0)
         return setError("Enter a valid selling price for item " + (i + 1) + ".");
-
+      
     }
 
     const payingAccount = purchaseForm.paymentMethod === "Credit"
@@ -1420,7 +1320,8 @@ const batches = await db.stockBatches
 
             const quantity = Number(item.quantity);
             const buyingPrice = Number(item.buyingPrice);
-
+            const sellingPrice = Number(item.sellingPrice);
+            
 
             if (!product) {
               const newProductId = await db.products.add({
@@ -2060,29 +1961,9 @@ const batches = await db.stockBatches
                     <label>Category<input name="category" value={form.category} onChange={updateField} /></label>
                     <label>Product code<input name="sku" value={form.sku} onChange={updateField} /></label>
                     <label>Buying price (UGX) *<input type="number" min="1" name="buyingPrice" value={form.buyingPrice} onChange={updateField} required /></label>
-
-                    <label>Quantity (products without sizes)<input type="number" min="0" step="1" name="quantity" value={form.quantity} onChange={updateField} /></label>
+                    <label>Selling price (UGX) *<input type="number" min="1" name="sellingPrice" value={form.sellingPrice} onChange={updateField} required /></label>
+                    <label>Quantity *<input type="number" min="0" step="1" name="quantity" value={form.quantity} onChange={updateField} required /></label>
                   </div>
-                  {editingProductId === null && (
-                    <div className="variant-section">
-                      <h4>Product sizes / measurements (optional)</h4>
-                      {variantRows.map((row, index) => (
-                        <div className="form-grid" key={index}>
-                          <label>Size or measurement
-                            <input value={row.name} placeholder="e.g. 4x6" onChange={e => setVariantRows(rows => rows.map((item, i) => i === index ? { ...item, name: e.target.value } : item))} />
-                          </label>
-                          <label>Opening stock quantity
-                            <input type="number" min="0" step="1" value={row.quantity} onChange={e => setVariantRows(rows => rows.map((item, i) => i === index ? { ...item, quantity: e.target.value } : item))} />
-                          </label>
-                          {variantRows.length > 1 && (
-                            <button type="button" className="secondary-button" onClick={() => setVariantRows(rows => rows.filter((_, i) => i !== index))}>Remove size</button>
-                          )}
-                        </div>
-                      ))}
-                      <button type="button" className="secondary-button" onClick={() => setVariantRows(rows => [...rows, { name: "", quantity: "" }])}>+ Add another size</button>
-                    </div>
-                  )}
-
 
                   <div className="form-actions">
                     <button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Cancel</button>
@@ -2102,7 +1983,6 @@ const batches = await db.stockBatches
                     <thead>
                       <tr>
                         <th>Product</th>
-                        <th>Size</th>
                         <th>Buying price</th>
                         <th>Quantity</th>
                         <th>Action</th>
@@ -2112,7 +1992,6 @@ const batches = await db.stockBatches
                       {products.map(p => (
                         <tr key={p.id}>
                           <td><strong>{p.name}</strong><small>{p.category}</small></td>
-                          <td>{productVariants.filter(v => String(v.productId) === String(p.id)).map(v => v.name).filter(Boolean).join(", ") || p.sku || "—"}</td>
                           <td>{money(p.buyingPrice)}</td>
                           <td>{p.quantity}</td>
                           <td>
@@ -2147,77 +2026,33 @@ const batches = await db.stockBatches
                   <label>Shop serving this customer *
                     <select
                       value={saleForm.location || "Main Shop"}
-                      onChange={e => { setSaleForm({ ...saleForm, location: e.target.value, productId: "" }); setSelectedVariantId(""); }}
+                      onChange={e => setSaleForm({ ...saleForm, location: e.target.value, productId: "" })}
                       required
                     >
                       {shopLocations.map(location => <option key={location} value={location}>{location}</option>)}
                     </select>
                   </label>
 
-                  <label>Items / Size *
-                    <select
-                      value={selectedProduct
-                        ? (selectedVariant ? String(selectedProduct.id) + "::" + String(selectedVariant.id) : String(selectedProduct.id))
-                        : ""}
-                      onChange={e => {
-                        const [productId, variantId] = e.target.value.split("::");
-                        const match = products.find(p => String(p.id) === productId);
-
-                        setSaleForm({
-                          ...saleForm,
-                          productId: productId || "",
-                          sellingPrice: match && match.sellingPrice
-                            ? String(match.sellingPrice)
-                            : ""
-                        });
-
-                        setSelectedVariantId(variantId || "");
-                        setError("");
-                      }}
-                      required
-                    >
-                      <option value="">Search and select an item and size...</option>
-                      {products.flatMap(p => {
-                        const variants = productVariants.filter(
-                          v => String(v.productId) === String(p.id)
-                        );
-
-                        if (variants.length > 0) {
-                          return variants.map(v => {
-                            const available = stockBatches
-                              .filter(b =>
-                                String(b.variantId) === String(v.id) &&
-                                normalizeLocation(b.location || "Main Shop") ===
-                                  normalizeLocation(saleForm.location || "Main Shop")
-                              )
-                              .reduce((sum, b) =>
-                                sum + Number(b.quantityRemaining || 0), 0);
-
-                            return available > 0 ? (
-                              <option
-                                key={String(p.id) + "::" + String(v.id)}
-                                value={String(p.id) + "::" + String(v.id)}
-                              >
-                                {p.name} — Category: {p.category || "Uncategorized"} — Size {v.name} — Stock: {available}
-                              </option>
-                            ) : null;
-                          });
-                        }
-
-                        const available = getShopStock(
-                          p.id,
-                          saleForm.location || "Main Shop"
-                        );
-
-                        return available > 0 ? [
-                          <option key={p.id} value={String(p.id)}>
-                            {p.name} — Category: {p.category || "Uncategorized"}{p.sku ? " — Size " + p.sku : ""} — Stock: {available}
-                          </option>
-                        ] : [];
-                      })}
+                  <label>Items *
+                    <select value={saleForm.productId} onChange={e => {
+                      const selectedId = e.target.value;
+                      const match = products.find(p => String(p.id) === selectedId);
+                      
+                      setSaleForm({
+                        ...saleForm,
+                        productId: selectedId,
+                        sellingPrice: match && match.sellingPrice ? String(match.sellingPrice) : ""
+                      });
+                      setError("");
+                    }} required>
+                      <option value="">Search and select an item from available stock...</option>
+                      {products.filter(p => getShopStock(p.id, saleForm.location || "Main Shop") > 0).map(p => (
+                        <option key={p.id} value={String(p.id)}>
+                          {p.name}{p.sku ? " (" + p.sku + ")" : ""} — {saleForm.location || "Main Shop"} stock: {getShopStock(p.id, saleForm.location || "Main Shop")}
+                        </option>
+                      ))}
                     </select>
                   </label>
-
                   <label>Quantity *
                     <input type="number" min="1" step="1" value={saleForm.quantity} onChange={e => setSaleForm({ ...saleForm, quantity: e.target.value })} required />
                   </label>
@@ -2234,7 +2069,7 @@ const batches = await db.stockBatches
                     <input value={saleForm.customerPhone} onChange={e => setSaleForm({ ...saleForm, customerPhone: e.target.value })} />
                   </label>
 
-
+                  
 
                   <label>Sale type *
                     <select
@@ -3097,9 +2932,9 @@ const batches = await db.stockBatches
 
               <div className="cards">
                 <div className="card">
-                  <p>Total Products Across All Shops</p>
-                  <h2>{totalProducts}</h2>
-                  <small>Different products in your business</small>
+                  <p>Total Stock Across All Shops</p>
+                  <h2>{totalUnits}</h2>
+                  <small>Combined business inventory</small>
                 </div>
                 <div className="card">
                   <p>Products In Stock</p>
@@ -3284,7 +3119,7 @@ const batches = await db.stockBatches
               </div>
 
 
-
+            
               <div className="table-card" style={{ marginTop: "24px" }}>
                 <h3>Stock Movement History</h3>
                 <p className="muted">This shows exactly why stock is reducing. Look at the "Type" column.</p>
@@ -3875,23 +3710,6 @@ const batches = await db.stockBatches
               </div>
             </>
           )}
-          {activePage === "Daily Balance" && (
-            <DailyBalance
-              db={db}
-              products={products}
-              productVariants={productVariants}
-              stockBatches={stockBatches}
-              sales={sales}
-              payments={payments}
-              expenses={expenses}
-              stockPurchases={stockPurchases}
-              money={money}
-              onSaved={loadData}
-            />
-          )}
-
-
-
 
           {activePage === "Settings" && (
             <div>
@@ -3917,42 +3735,42 @@ const batches = await db.stockBatches
             <p style={{ fontSize: "14px", color: "#555", marginBottom: "20px" }}>
               To move this product to Trash, please verify your owner account.
             </p>
-
+            
             <form onSubmit={confirmDeleteProduct}>
               <label style={{ display: "block", marginBottom: "12px", fontSize: "14px", fontWeight: "bold" }}>
                 Owner Email
-                <input
-                  type="email"
-                  value={deleteEmail}
-                  onChange={e => setDeleteEmail(e.target.value)}
-                  required
+                <input 
+                  type="email" 
+                  value={deleteEmail} 
+                  onChange={e => setDeleteEmail(e.target.value)} 
+                  required 
                   style={{ width: "100%", padding: "10px", marginTop: "4px", borderRadius: "6px", border: "1px solid #ccc" }}
                 />
               </label>
 
               <label style={{ display: "block", marginBottom: "20px", fontSize: "14px", fontWeight: "bold" }}>
                 Password
-                <input
-                  type="password"
-                  value={deletePassword}
-                  onChange={e => setDeletePassword(e.target.value)}
-                  required
+                <input 
+                  type="password" 
+                  value={deletePassword} 
+                  onChange={e => setDeletePassword(e.target.value)} 
+                  required 
                   style={{ width: "100%", padding: "10px", marginTop: "4px", borderRadius: "6px", border: "1px solid #ccc" }}
                 />
               </label>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-                <button
-                  type="button"
-                  className="secondary-button"
+                <button 
+                  type="button" 
+                  className="secondary-button" 
                   onClick={cancelDeleteProduct}
                   disabled={deleteBusy}
                 >
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  className="delete-button"
+                <button 
+                  type="submit" 
+                  className="delete-button" 
                   style={{ backgroundColor: "#dc2626", color: "white", padding: "8px 16px", borderRadius: "6px", border: "none", cursor: "pointer" }}
                   disabled={deleteBusy}
                 >
@@ -4053,3 +3871,4 @@ const batches = await db.stockBatches
 }
 
 export default App;
+
